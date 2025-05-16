@@ -18,29 +18,10 @@ PIP_PACKAGES=(
 NODES=(
     "https://github.com/ltdrdata/ComfyUI-Manager"
     "https://github.com/cubiq/ComfyUI_essentials"
-    # "https://github.com/Suzie1/ComfyUI_Comfyroll_CustomNodes"
-    # "https://github.com/benjiyaya/ComfyUI-HunyuanVideoImagesGuider"
-    # "https://github.com/kijai/ComfyUI-Florence2"
     "https://github.com/welltop-cn/ComfyUI-TeaCache.git"
     "https://github.com/kijai/ComfyUI-KJNodes"
-    # "https://github.com/un-seen/comfyui-tensorops"
     "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite"
-    # "https://github.com/pythongosssss/ComfyUI-Custom-Scripts"
-    # "https://github.com/crystian/ComfyUI-Crystools.git"
-    # "https://github.com/welltop-cn/ComfyUI-TeaCache.git"
-    # "https://github.com/kijai/ComfyUI-HunyuanVideoWrapper.git"
-    # "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
-    # "https://github.com/chrisgoringe/cg-use-everywhere.git"
-    # "https://github.com/Lerc/canvas_tab.git"
-    # "https://github.com/huchenlei/ComfyUI-layerdiffuse.git"
-    # "https://github.com/shadowcz007/comfyui-mixlab-nodes.git"
-    # "https://github.com/chflame163/ComfyUI_LayerStyle.git"
-    # "https://github.com/Kosinkadink/ComfyUI-Advanced-ControlNet.git"
-    # "https://github.com/cubiq/ComfyUI_IPAdapter_plus.git"
-    # "https://github.com/sipherxyz/comfyui-art-venture.git"
-    # "https://github.com/jakechai/ComfyUI-JakeUpgrade.git"
-    # "https://github.com/twri/sdxl_prompt_styler.git"
-    # "https://github.com/hylarucoder/comfyui-copilot.git"
+    "https://github.com/rgthree/rgthree-comfy.git"
     "https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch.git"
     "https://github.com/WASasquatch/was-node-suite-comfyui.git"
     
@@ -57,11 +38,8 @@ CHECKPOINT_MODELS=(
 )
 
 UNET_MODELS=(
-    # "https://huggingface.co/Comfy-Org/HunyuanVideo_repackaged/resolve/main/split_files/diffusion_models/hunyuan_video_t2v_720p_bf16.safetensors"
-    # "https://huggingface.co/Kijai/HunyuanVideo_comfy/resolve/6e02d99d3e62501ed5533cd7e174153012cf18c0/hunyuan_video_720_fp8_e4m3fn.safetensors"
     "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp16.safetensors"
-    # "https://huggingface.co/Comfy-Org/HunyuanVideo_repackaged/resolve/main/split_files/diffusion_models/hunyuan_video_v2_replace_image_to_video_720p_bf16.safetensors"
-    # "https://huggingface.co/Kijai/HunyuanVideo_comfy/resolve/main/hunyuan_video_FastVideo_720_fp8_e4m3fn.safetensors"
+    "https://huggingface.co/lodestones/Chroma/resolve/main/chroma-unlocked-v29.safetensors"
 )
 
 LORA_MODELS=(
@@ -74,6 +52,7 @@ VAE_MODELS=(
     # "https://huggingface.co/Comfy-Org/HunyuanVideo_repackaged/resolve/main/split_files/vae/hunyuan_video_vae_bf16.safetensors"
     "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"
     # "https://huggingface.co/stabilityai/sdxl-vae/resolve/main/sdxl_vae.safetensors"
+    "https://huggingface.co/Madespace/vae/resolve/main/ae.sft"
     
 )
 
@@ -84,36 +63,16 @@ ESRGAN_MODELS=(
 )
 
 TEXT_ENCODER_MODELS=(
-    # "https://huggingface.co/ai-forever/Real-ESRGAN/resolve/main/RealESRGAN_x4.pth"
     "https://huggingface.co/Comfy-Org/HunyuanVideo_repackaged/resolve/main/split_files/text_encoders/clip_l.safetensors"
     "https://huggingface.co/Comfy-Org/HunyuanVideo_repackaged/resolve/main/split_files/text_encoders/llava_llama3_fp8_scaled.safetensors"
     "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
     "https://huggingface.co/Comfy-Org/HunyuanVideo_repackaged/resolve/main/split_files/clip_vision/llava_llama3_vision.safetensors"
+    "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp16.safetensors"
 )
 
 
 CONTROLNET_MODELS=(
-    # "https://huggingface.co/lllyasviel/sd_control_collection/resolve/main/diffusers_xl_canny_mid.safetensors"
-    # "https://huggingface.co/lllyasviel/sd_control_collection/resolve/main/diffusers_xl_depth_mid.safetensors?download"
-    # "https://huggingface.co/lllyasviel/sd_control_collection/resolve/main/t2i-adapter_diffusers_xl_openpose.safetensors"
-    # "https://huggingface.co/webui/ControlNet-modules-safetensors/resolve/main/control_canny-fp16.safetensors"
-    # #"https://huggingface.co/webui/ControlNet-modules-safetensors/resolve/main/control_depth-fp16.safetensors"
-    # "https://huggingface.co/kohya-ss/ControlNet-diff-modules/resolve/main/diff_control_sd15_depth_fp16.safetensors"
-    # #"https://huggingface.co/webui/ControlNet-modules-safetensors/resolve/main/control_hed-fp16.safetensors"
-    # #"https://huggingface.co/webui/ControlNet-modules-safetensors/resolve/main/control_mlsd-fp16.safetensors"
-    # #"https://huggingface.co/webui/ControlNet-modules-safetensors/resolve/main/control_normal-fp16.safetensors"
-    # "https://huggingface.co/webui/ControlNet-modules-safetensors/resolve/main/control_openpose-fp16.safetensors"
-    # #"https://huggingface.co/webui/ControlNet-modules-safetensors/resolve/main/control_scribble-fp16.safetensors"
-    # #"https://huggingface.co/webui/ControlNet-modules-safetensors/resolve/main/control_seg-fp16.safetensors"
-    # "https://huggingface.co/webui/ControlNet-modules-safetensors/resolve/main/t2iadapter_canny-fp16.safetensors"
-    # #"https://huggingface.co/webui/ControlNet-modules-safetensors/resolve/main/t2iadapter_color-fp16.safetensors"
-    # #"https://huggingface.co/webui/ControlNet-modules-safetensors/resolve/main/t2iadapter_depth-fp16.safetensors"
-    # #"https://huggingface.co/webui/ControlNet-modules-safetensors/resolve/main/t2iadapter_keypose-fp16.safetensors"
-    # "https://huggingface.co/xinsir/controlnet-union-sdxl-1.0/resolve/main/diffusion_pytorch_model_promax.safetensors"
-    # "https://huggingface.co/webui/ControlNet-modules-safetensors/resolve/main/t2iadapter_openpose-fp16.safetensors"
-    # #"https://huggingface.co/webui/ControlNet-modules-safetensors/resolve/main/t2iadapter_seg-fp16.safetensors"
-    # #"https://huggingface.co/webui/ControlNet-modules-safetensors/resolve/main/t2iadapter_sketch-fp16.safetensors"
-    # #"https://huggingface.co/webui/ControlNet-modules-safetensors/resolve/main/t2iadapter_style-fp16.safetensors"
+
 )
 
 ### DO NOT EDIT BELOW HERE UNLESS YOU KNOW WHAT YOU ARE DOING ###
