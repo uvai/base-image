@@ -78,16 +78,16 @@ CONTROLNET_MODELS=(
 function provisioning_start() {
     provisioning_print_header
 
-    if [[ ${AUTO_UPDATE,,} != "false" ]]; then
-        echo "Auto-updating ComfyUI core..."
-        if [ -d /workspace/ComfyUI/.git ]; then
-            (cd /workspace/ComfyUI && git pull)
-        else
-            echo "ComfyUI is not a git repo. Replacing with latest clone..."
-            rm -rf /workspace/ComfyUI
-            git clone https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI
-        fi
+    echo "Auto-updating ComfyUI core..."
+    if git -C /workspace/ComfyUI rev-parse 2>/dev/null; then
+        echo "Found git repo, pulling latest ComfyUI..."
+        (cd /workspace/ComfyUI && git pull)
+    else
+        echo "ComfyUI not a git repo or missing. Cloning fresh copy..."
+        rm -rf /workspace/ComfyUI
+        git clone https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI
     fi
+    
     provisioning_print_header
     provisioning_get_apt_packages
     provisioning_get_nodes
