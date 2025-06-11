@@ -39,7 +39,8 @@ CHECKPOINT_MODELS=(
 
 UNET_MODELS=(
     "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp16.safetensors"
-    "https://huggingface.co/lodestones/Chroma/resolve/main/chroma-unlocked-v29.5.safetensors"
+    "https://huggingface.co/lodestones/Chroma/resolve/main/chroma-unlocked-v35.safetensors"
+    "https://huggingface.co/lodestones/Chroma/resolve/main/chroma-unlocked-v35-detail-calibrated.safetensors"
 )
 
 LORA_MODELS=(
