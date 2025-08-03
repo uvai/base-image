@@ -63,6 +63,10 @@ ESRGAN_MODELS=(
 
 )
 
+UPSCALE_MODELS=(
+    "https://huggingface.co/vclansience/SD_lora/resolve/f84965db9ef44ea160e6c940793133a31e2e1ce4/4xUltrasharp_4xUltrasharpV10.pt"
+)
+
 TEXT_ENCODER_MODELS=(
     "https://huggingface.co/Comfy-Org/HunyuanVideo_repackaged/resolve/main/split_files/text_encoders/clip_l.safetensors"
     "https://huggingface.co/Comfy-Org/HunyuanVideo_repackaged/resolve/main/split_files/text_encoders/llava_llama3_fp8_scaled.safetensors"
@@ -114,6 +118,9 @@ function provisioning_start() {
     provisioning_get_files \
         "${COMFYUI_DIR}/models/vae" \
         "${VAE_MODELS[@]}"
+    provisioning_get_files \
+        "${COMFYUI_DIR}/models/upscale_models" \
+        "${UPSCALE_MODELS[@]}"
     provisioning_get_files \
         "${COMFYUI_DIR}/models/diffusion_models" \
         "${DIFFUSION_MODELS[@]}"
