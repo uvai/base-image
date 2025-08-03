@@ -11,8 +11,7 @@ APT_PACKAGES=(
 )
 
 PIP_PACKAGES=(
-    #"package-1"
-    #"package-2"
+    "av"
 )
 
 NODES=(
@@ -23,7 +22,7 @@ NODES=(
     "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite"
     "https://github.com/rgthree/rgthree-comfy.git"
     "https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch.git"
-    "https://github.com/WASasquatch/was-node-suite-comfyui.git"
+    # "https://github.com/WASasquatch/was-node-suite-comfyui.git"
     
     
 )
@@ -39,7 +38,13 @@ CHECKPOINT_MODELS=(
 
 UNET_MODELS=(
     "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp16.safetensors"
-    "https://huggingface.co/lodestones/Chroma/resolve/main/chroma-unlocked-v43.safetensors"
+    
+    "https://huggingface.co/lodestones/Chroma/resolve/main/chroma-unlocked-v48.safetensors"
+)
+
+DIFFUSION_MODELS=(
+    "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"
+    "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"
 )
 
 LORA_MODELS=(
@@ -108,6 +113,9 @@ function provisioning_start() {
     provisioning_get_files \
         "${COMFYUI_DIR}/models/vae" \
         "${VAE_MODELS[@]}"
+    provisioning_get_files \
+        "${COMFYUI_DIR}/models/diffusion_models" \
+        "${DIFFUSION_MODELS[@]}"
     provisioning_get_files \
         "${COMFYUI_DIR}/models/text_encoders" \
         "${TEXT_ENCODER_MODELS[@]}"
