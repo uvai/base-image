@@ -140,6 +140,19 @@ function provisioning_get_pip_packages() {
     fi
 }
 
+function provisioning_install_sageattention() {
+    echo "Installing SageAttention v2.1.1 for RTX 5090..."
+
+    # Ensure Triton is installed (required for SageAttention)
+    if ! pip show triton >/dev/null 2>&1; then
+        echo "Installing Triton..."
+        pip install triton
+    fi
+
+    # Install the SageAttention wheel for CUDA 12.8 and PyTorch 2.7.0
+    pip install https://github.com/woct0rdho/SageAttention/releases/download/v2.1.1/sageattention-2.1.1+cu128torch2.7.0.whl
+}
+
 function provisioning_get_nodes() {
     for repo in "${NODES[@]}"; do
         dir="${repo##*/}"
