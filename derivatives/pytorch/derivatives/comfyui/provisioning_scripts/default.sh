@@ -158,7 +158,7 @@ function provisioning_install_sageattention() {
     fi
 
     # Install the SageAttention wheel for CUDA 12.8 and PyTorch 2.7.0
-    pip install https://github.com/woct0rdho/SageAttention/releases/download/v2.1.1/sageattention-2.1.1+cu128torch2.7.0.whl
+    pip install "https://github.com/woct0rdho/SageAttention/releases/download/v2.1.1/sageattention-2.1.1%2Bcu128torch2.7.0.whl"
 }
 
 function provisioning_get_nodes() {
