@@ -65,6 +65,7 @@ ESRGAN_MODELS=(
 
 UPSCALE_MODELS=(
     "https://huggingface.co/vclansience/SD_lora/resolve/f84965db9ef44ea160e6c940793133a31e2e1ce4/4xUltrasharp_4xUltrasharpV10.pt"
+    "https://huggingface.co/Phips/4xLSDIRDAT/resolve/main/4xLSDIRDAT.safetensors"
 )
 
 TEXT_ENCODER_MODELS=(
