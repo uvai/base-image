@@ -22,18 +22,16 @@ NODES=(
     "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite"
     "https://github.com/rgthree/rgthree-comfy.git"
     "https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch.git"
-    # "https://github.com/WASasquatch/was-node-suite-comfyui.git"
+    "https://github.com/WASasquatch/was-node-suite-comfyui.git"
     
     
 )
 
 CHECKPOINT_MODELS=(
 
-    #" https://huggingface.co/stabilityai/stable-diffusion-2-1/resolve/main/v2-1_768-ema-pruned.ckpt"
-    # "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors"
+
     "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.ckpt"
-    # "https://huggingface.co/Comfy-Org/HunyuanVideo_repackaged/resolve/main/split_files/diffusion_models/hunyuan_video_t2v_720p_bf16.safetensors"
-    # "https://huggingface.co/stabilityai/stable-diffusion-xl-refiner-1.0/resolve/main/sd_xl_refiner_1.0.safetensors"
+
 )
 
 UNET_MODELS=(
@@ -48,7 +46,7 @@ DIFFUSION_MODELS=(
 )
 
 LORA_MODELS=(
-    # "https://civitai.com/api/download/models/16576"
+
 )
 
 VAE_MODELS=(
@@ -102,7 +100,7 @@ function provisioning_start() {
     provisioning_get_apt_packages
     provisioning_get_nodes
     provisioning_get_pip_packages
-    # provisioning_install_sageattention
+    provisioning_install_sageattention
     provisioning_get_files \
         "${COMFYUI_DIR}/models/checkpoints" \
         "${CHECKPOINT_MODELS[@]}"
