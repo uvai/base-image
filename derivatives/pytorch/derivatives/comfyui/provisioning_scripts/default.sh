@@ -23,6 +23,7 @@ NODES=(
     "https://github.com/rgthree/rgthree-comfy.git"
     "https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch.git"
     "https://github.com/WASasquatch/was-node-suite-comfyui.git"
+    "https://github.com/ClownsharkBatwing/RES4LYF.git"
     
     
 )
