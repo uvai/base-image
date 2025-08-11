@@ -24,7 +24,7 @@ NODES=(
     "https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch.git"
     "https://github.com/WASasquatch/was-node-suite-comfyui.git"
     "https://github.com/ClownsharkBatwing/RES4LYF.git"
-    "https://github.com/chrisgoringe/cg-use-everywhere.git"
+    # "https://github.com/chrisgoringe/cg-use-everywhere.git"
     
     
 )
@@ -39,7 +39,7 @@ CHECKPOINT_MODELS=(
 UNET_MODELS=(
     "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/diffusion_models/wan2.1_i2v_480p_14B_fp16.safetensors"
     
-    "https://huggingface.co/lodestones/Chroma/resolve/main/chroma-unlocked-v48.safetensors"
+    "https://huggingface.co/lodestones/Chroma/resolve/main/chroma-unlocked-v50.safetensors"
 )
 
 DIFFUSION_MODELS=(
