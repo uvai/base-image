@@ -24,7 +24,7 @@ NODES=(
     "https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch.git"
     "https://github.com/WASasquatch/was-node-suite-comfyui.git"
     "https://github.com/ClownsharkBatwing/RES4LYF.git"
-    # "https://github.com/chrisgoringe/cg-use-everywhere.git"
+    "https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git"
     
     
 )
