@@ -25,6 +25,7 @@ NODES=(
     "https://github.com/WASasquatch/was-node-suite-comfyui.git"
     "https://github.com/ClownsharkBatwing/RES4LYF.git"
     "https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git"
+    "https://github.com/kijai/ComfyUI-GIMM-VFI.git"
     
     
 )
@@ -66,6 +67,7 @@ ESRGAN_MODELS=(
 UPSCALE_MODELS=(
     "https://huggingface.co/vclansience/SD_lora/resolve/f84965db9ef44ea160e6c940793133a31e2e1ce4/4xUltrasharp_4xUltrasharpV10.pt"
     "https://huggingface.co/Phips/4xLSDIRDAT/resolve/main/4xLSDIRDAT.safetensors"
+    "https://huggingface.co/Kijai/GIMM-VFI_safetensors/resolve/f06ecc593e175188d71d8c31c86bce83696430e5/gimmvfi_f_arb_lpips_fp32.safetensors"
 )
 
 TEXT_ENCODER_MODELS=(
