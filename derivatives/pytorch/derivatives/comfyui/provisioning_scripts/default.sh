@@ -27,6 +27,7 @@ NODES=(
     "https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git"
     "https://github.com/kijai/ComfyUI-GIMM-VFI.git"
     "https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced.git"
+    "https://github.com/moonwhaler/comfyui-seedvr2-tilingupscaler.git"
     
     
 )
