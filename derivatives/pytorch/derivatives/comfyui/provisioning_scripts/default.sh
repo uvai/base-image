@@ -36,6 +36,8 @@ NODES=(
     "https://github.com/kijai/ComfyUI-WanAnimatePreprocess.git"
     "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
     "https://github.com/ibaiGorordo/ONNX-YOLOv10-Object-Detection.git"
+
+    "https://github.com/crystian/ComfyUI-Crystools.git"
     
     
 )
