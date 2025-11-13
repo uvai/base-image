@@ -35,6 +35,7 @@ NODES=(
     "https://github.com/un-seen/comfyui-tensorops.git"
     "https://github.com/kijai/ComfyUI-WanAnimatePreprocess.git"
     "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
+    "https://github.com/ibaiGorordo/ONNX-YOLOv10-Object-Detection.git"
     
     
 )
