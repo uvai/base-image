@@ -29,6 +29,13 @@ NODES=(
     "https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced.git"
     "https://github.com/moonwhaler/comfyui-seedvr2-tilingupscaler.git"
     
+    "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
+    "https://github.com/kijai/ComfyUI-segment-anything-2.git"
+    "https://github.com/Fannovel16/ComfyUI-Frame-Interpolation.git"
+    "https://github.com/un-seen/comfyui-tensorops.git"
+    "https://github.com/kijai/ComfyUI-WanAnimatePreprocess.git"
+    "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
+    
     
 )
 
