@@ -16,18 +16,18 @@ PIP_PACKAGES=(
 
 NODES=(
     "https://github.com/ltdrdata/ComfyUI-Manager"
-    # "https://github.com/cubiq/ComfyUI_essentials"
-    # "https://github.com/welltop-cn/ComfyUI-TeaCache.git"
-    # "https://github.com/kijai/ComfyUI-KJNodes"
-    # "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite"
-    # "https://github.com/rgthree/rgthree-comfy.git"
-    # "https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch.git"
-    # "https://github.com/WASasquatch/was-node-suite-comfyui.git"
-    # "https://github.com/ClownsharkBatwing/RES4LYF.git"
-    # "https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git"
-    # "https://github.com/kijai/ComfyUI-GIMM-VFI.git"
-    # "https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced.git"
-    # "https://github.com/moonwhaler/comfyui-seedvr2-tilingupscaler.git"
+    "https://github.com/cubiq/ComfyUI_essentials"
+    "https://github.com/welltop-cn/ComfyUI-TeaCache.git"
+    "https://github.com/kijai/ComfyUI-KJNodes"
+    "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite"
+    "https://github.com/rgthree/rgthree-comfy.git"
+    "https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch.git"
+    "https://github.com/WASasquatch/was-node-suite-comfyui.git"
+    "https://github.com/ClownsharkBatwing/RES4LYF.git"
+    "https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git"
+    "https://github.com/kijai/ComfyUI-GIMM-VFI.git"
+    "https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced.git"
+    "https://github.com/moonwhaler/comfyui-seedvr2-tilingupscaler.git"
     
     # "https://github.com/kijai/ComfyUI-WanVideoWrapper.git"
     # "https://github.com/kijai/ComfyUI-segment-anything-2.git"
@@ -56,13 +56,13 @@ UNET_MODELS=(
 )
 
 DIFFUSION_MODELS=(
-    # "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"
-    # "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"
-    # "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_fp8_e4m3fn.safetensors"
-    # "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_edit_fp8_e4m3fn.safetensors"
-    # "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_edit_2509_fp8_e4m3fn.safetensors"
+    "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"
+    "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"
+    "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_fp8_e4m3fn.safetensors"
+    "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_edit_fp8_e4m3fn.safetensors"
+    "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_edit_2509_fp8_e4m3fn.safetensors"
 
-    "https://huggingface.co/tencent/Hunyuan3D-2mv/resolve/main/hunyuan3d-dit-v2-mv/model.fp16.safetensors"
+    # "https://huggingface.co/tencent/Hunyuan3D-2mv/resolve/main/hunyuan3d-dit-v2-mv/model.fp16.safetensors"
     
 
 
