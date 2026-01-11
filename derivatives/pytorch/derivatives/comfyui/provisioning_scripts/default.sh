@@ -12,6 +12,7 @@ APT_PACKAGES=(
 
 PIP_PACKAGES=(
     "av"
+    "sqlalchemy"
 )
 
 NODES=(
