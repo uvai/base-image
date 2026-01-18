@@ -32,6 +32,12 @@ NODES=(
     "https://github.com/erosDiffusion/ComfyUI-EulerDiscreteScheduler.git"
     "https://github.com/1038lab/ComfyUI-RMBG.git"
     "https://github.com/CY-CHENYUE/ComfyUI-InpaintEasy.git"
+    "https://github.com/chflame163/ComfyUI_LayerStyle.git"
+    "https://github.com/yolain/ComfyUI-Easy-Use.git"
+    "https://github.com/PozzettiAndrea/ComfyUI-SAM3.git"
+    "https://github.com/JPS-GER/ComfyUI_JPS-Nodes.git"
+    "https://github.com/tooldigital/ComfyUI-Yolo-Cropper.git"
+    "https://github.com/thalismind/ComfyUI-LoadImageWithFilename.git"
     
 
 
@@ -44,6 +50,8 @@ CHECKPOINT_MODELS=(
 
 
     # "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.ckpt"
+    "https://huggingface.co/Phr00t/Qwen-Image-Edit-Rapid-AIO/resolve/main/v20/Qwen-Rapid-AIO-NSFW-v20.safetensors"
+    "https://huggingface.co/Lightricks/LTX-2/resolve/main/ltx-2-19b-dev.safetensors"
 
 )
 
