@@ -38,6 +38,7 @@ NODES=(
     "https://github.com/JPS-GER/ComfyUI_JPS-Nodes.git"
     "https://github.com/tooldigital/ComfyUI-Yolo-Cropper.git"
     "https://github.com/thalismind/ComfyUI-LoadImageWithFilename.git"
+    "https://github.com/city96/ComfyUI-GGUF.git"
     
 
 
