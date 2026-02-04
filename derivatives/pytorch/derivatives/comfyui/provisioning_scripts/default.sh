@@ -24,25 +24,25 @@ NODES=(
     "https://github.com/rgthree/rgthree-comfy.git"
     "https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch.git"
     "https://github.com/WASasquatch/was-node-suite-comfyui.git"
-    "https://github.com/ClownsharkBatwing/RES4LYF.git"
-    "https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git"
-    "https://github.com/kijai/ComfyUI-GIMM-VFI.git"
-    "https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced.git"
-    "https://github.com/moonwhaler/comfyui-seedvr2-tilingupscaler.git"
-    "https://github.com/erosDiffusion/ComfyUI-EulerDiscreteScheduler.git"
-    "https://github.com/1038lab/ComfyUI-RMBG.git"
-    "https://github.com/CY-CHENYUE/ComfyUI-InpaintEasy.git"
-    "https://github.com/chflame163/ComfyUI_LayerStyle.git"
-    "https://github.com/yolain/ComfyUI-Easy-Use.git"
-    "https://github.com/PozzettiAndrea/ComfyUI-SAM3.git"
-    "https://github.com/JPS-GER/ComfyUI_JPS-Nodes.git"
-    "https://github.com/tooldigital/ComfyUI-Yolo-Cropper.git"
-    "https://github.com/thalismind/ComfyUI-LoadImageWithFilename.git"
-    "https://github.com/city96/ComfyUI-GGUF.git"
+    # "https://github.com/ClownsharkBatwing/RES4LYF.git"
+    # "https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git"
+    # "https://github.com/kijai/ComfyUI-GIMM-VFI.git"
+    # "https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced.git"
+    # "https://github.com/moonwhaler/comfyui-seedvr2-tilingupscaler.git"
+    # "https://github.com/erosDiffusion/ComfyUI-EulerDiscreteScheduler.git"
+    # "https://github.com/1038lab/ComfyUI-RMBG.git"
+    # "https://github.com/CY-CHENYUE/ComfyUI-InpaintEasy.git"
+    # "https://github.com/chflame163/ComfyUI_LayerStyle.git"
+    # "https://github.com/yolain/ComfyUI-Easy-Use.git"
+    # "https://github.com/PozzettiAndrea/ComfyUI-SAM3.git"
+    # "https://github.com/JPS-GER/ComfyUI_JPS-Nodes.git"
+    # "https://github.com/tooldigital/ComfyUI-Yolo-Cropper.git"
+    # "https://github.com/thalismind/ComfyUI-LoadImageWithFilename.git"
+    # "https://github.com/city96/ComfyUI-GGUF.git"
     
 
 
-    "https://github.com/crystian/ComfyUI-Crystools.git"
+    # "https://github.com/crystian/ComfyUI-Crystools.git"
     
     
 )
@@ -52,7 +52,7 @@ CHECKPOINT_MODELS=(
 
     # "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/main/v1-5-pruned-emaonly.ckpt"
     "https://huggingface.co/Phr00t/Qwen-Image-Edit-Rapid-AIO/resolve/main/v20/Qwen-Rapid-AIO-NSFW-v20.safetensors"
-    "https://huggingface.co/Lightricks/LTX-2/resolve/main/ltx-2-19b-dev.safetensors"
+    # "https://huggingface.co/Lightricks/LTX-2/resolve/main/ltx-2-19b-dev.safetensors"
 
 )
 
@@ -70,6 +70,7 @@ DIFFUSION_MODELS=(
     # "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_edit_2509_fp8_e4m3fn.safetensors"
     "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_edit_2511_bf16.safetensors"
     "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_bf16.safetensors"
+    "https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/resolve/main/flux-2-klein-9b.safetensors"
 
     # "https://huggingface.co/tencent/Hunyuan3D-2mv/resolve/main/hunyuan3d-dit-v2-mv/model.fp16.safetensors"
     
