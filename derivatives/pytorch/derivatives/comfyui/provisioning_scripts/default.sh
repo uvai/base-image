@@ -18,32 +18,32 @@ PIP_PACKAGES=(
 
 NODES=(
     "https://github.com/ltdrdata/ComfyUI-Manager"
-    # "https://github.com/cubiq/ComfyUI_essentials"
-    # "https://github.com/welltop-cn/ComfyUI-TeaCache.git"
-    # "https://github.com/kijai/ComfyUI-KJNodes"
-    # "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite"
-    # "https://github.com/rgthree/rgthree-comfy.git"
-    # "https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch.git"
-    # "https://github.com/WASasquatch/was-node-suite-comfyui.git"
-    # "https://github.com/ClownsharkBatwing/RES4LYF.git"
-    # "https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git"
-    # "https://github.com/kijai/ComfyUI-GIMM-VFI.git"
-    # "https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced.git"
-    # "https://github.com/moonwhaler/comfyui-seedvr2-tilingupscaler.git"
-    # "https://github.com/erosDiffusion/ComfyUI-EulerDiscreteScheduler.git"
-    # "https://github.com/1038lab/ComfyUI-RMBG.git"
-    # "https://github.com/CY-CHENYUE/ComfyUI-InpaintEasy.git"
-    # "https://github.com/chflame163/ComfyUI_LayerStyle.git"
-    # "https://github.com/yolain/ComfyUI-Easy-Use.git"
-    # "https://github.com/PozzettiAndrea/ComfyUI-SAM3.git"
-    # "https://github.com/JPS-GER/ComfyUI_JPS-Nodes.git"
-    # "https://github.com/tooldigital/ComfyUI-Yolo-Cropper.git"
-    # "https://github.com/thalismind/ComfyUI-LoadImageWithFilename.git"
-    # "https://github.com/city96/ComfyUI-GGUF.git"
+    "https://github.com/cubiq/ComfyUI_essentials"
+    "https://github.com/welltop-cn/ComfyUI-TeaCache.git"
+    "https://github.com/kijai/ComfyUI-KJNodes"
+    "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite"
+    "https://github.com/rgthree/rgthree-comfy.git"
+    "https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch.git"
+    "https://github.com/WASasquatch/was-node-suite-comfyui.git"
+    "https://github.com/ClownsharkBatwing/RES4LYF.git"
+    "https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git"
+    "https://github.com/kijai/ComfyUI-GIMM-VFI.git"
+    "https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced.git"
+    "https://github.com/moonwhaler/comfyui-seedvr2-tilingupscaler.git"
+    "https://github.com/erosDiffusion/ComfyUI-EulerDiscreteScheduler.git"
+    "https://github.com/1038lab/ComfyUI-RMBG.git"
+    "https://github.com/CY-CHENYUE/ComfyUI-InpaintEasy.git"
+    "https://github.com/chflame163/ComfyUI_LayerStyle.git"
+    "https://github.com/yolain/ComfyUI-Easy-Use.git"
+    "https://github.com/PozzettiAndrea/ComfyUI-SAM3.git"
+    "https://github.com/JPS-GER/ComfyUI_JPS-Nodes.git"
+    "https://github.com/tooldigital/ComfyUI-Yolo-Cropper.git"
+    "https://github.com/thalismind/ComfyUI-LoadImageWithFilename.git"
+    "https://github.com/city96/ComfyUI-GGUF.git"
     
 
 
-    # "https://github.com/crystian/ComfyUI-Crystools.git"
+    "https://github.com/crystian/ComfyUI-Crystools.git"
     
     
 )
@@ -68,6 +68,7 @@ DIFFUSION_MODELS=(
     # "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_edit_2511_bf16.safetensors"
     # "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_bf16.safetensors"
     "https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/resolve/main/flux-2-klein-9b.safetensors"
+    "https://huggingface.co/black-forest-labs/FLUX.2-klein-base-9b-fp8/resolve/main/flux-2-klein-base-9b-fp8.safetensors"
 
 
     
@@ -85,9 +86,10 @@ VAE_MODELS=(
 
     "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"
     "https://huggingface.co/Madespace/vae/resolve/main/ae.sft"
-    "https://huggingface.co/camenduru/FLUX.1-dev/resolve/d616d290809ffe206732ac4665a9ddcdfb839743/ae.safetensors"
+    # "https://huggingface.co/camenduru/FLUX.1-dev/resolve/d616d290809ffe206732ac4665a9ddcdfb839743/ae.safetensors"
     "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors"
-    "https://huggingface.co/StableDiffusionVN/Flux/resolve/main/Vae/flux_vae.safetensors"
+    # "https://huggingface.co/StableDiffusionVN/Flux/resolve/main/Vae/flux_vae.safetensors"
+    "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors"
     
 )
 
