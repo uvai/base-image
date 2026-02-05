@@ -13,6 +13,7 @@ APT_PACKAGES=(
 PIP_PACKAGES=(
     "av"
     "sqlalchemy"
+    "alembic"
 )
 
 NODES=(
@@ -130,6 +131,9 @@ function provisioning_start() {
         rm -rf /workspace/ComfyUI
         git clone https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI
     fi
+
+    echo "Installing ComfyUI core requirements..."
+    python -m pip install --no-cache-dir -r /workspace/ComfyUI/requirements.txt
     
     provisioning_print_header
     provisioning_get_apt_packages
