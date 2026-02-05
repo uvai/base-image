@@ -181,21 +181,6 @@ function provisioning_get_pip_packages() {
     fi
 }
 
-function provisioning_install_sageattention() {
-    echo "Installing SageAttention from source for RTX 5090..."
-
-    pip show triton >/dev/null 2>&1 || pip install triton
-
-    if [ ! -d /workspace/SageAttention ]; then
-        git clone https://github.com/thu-ml/SageAttention.git /workspace/SageAttention
-    else
-        echo "SageAttention already exists, pulling latest..."
-        (cd /workspace/SageAttention && git pull)
-    fi
-
-    cd /workspace/SageAttention
-    pip install --no-cache-dir .
-}
 
 function provisioning_get_nodes() {
     for repo in "${NODES[@]}"; do
