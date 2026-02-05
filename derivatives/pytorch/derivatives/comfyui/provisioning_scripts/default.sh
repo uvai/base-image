@@ -6,13 +6,13 @@ COMFYUI_DIR=${WORKSPACE}/ComfyUI
 # Packages are installed after nodes so we can fix them...
 
 APT_PACKAGES=(
-    #"package-1"
-    #"package-2"
+    "package-1"
+    "package-2"
 )
 
 PIP_PACKAGES=(
-    # "av"
-    # "sqlalchemy"
+    "av"
+    "sqlalchemy"
 )
 
 NODES=(
