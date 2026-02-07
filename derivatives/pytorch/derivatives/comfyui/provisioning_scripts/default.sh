@@ -98,7 +98,7 @@ ESRGAN_MODELS=(
 )
 
 UPSCALE_MODELS=(
-
+    "https://huggingface.co/uwg/upscaler/resolve/main/ESRGAN/4x_NMKD-Siax_200k.pth"
 )
 
 TEXT_ENCODER_MODELS=(
