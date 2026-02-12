@@ -40,6 +40,8 @@ NODES=(
     "https://github.com/tooldigital/ComfyUI-Yolo-Cropper.git"
     "https://github.com/thalismind/ComfyUI-LoadImageWithFilename.git"
     "https://github.com/city96/ComfyUI-GGUF.git"
+
+    "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
     
 
 
