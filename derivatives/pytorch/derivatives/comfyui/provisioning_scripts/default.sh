@@ -46,6 +46,7 @@ NODES=(
 
 
     "https://github.com/crystian/ComfyUI-Crystools.git"
+    "https://github.com/ai-joe-git/ComfyUI-Simple-Prompt-Batcher.git"
     
     
 )
