@@ -5,7 +5,7 @@ import pkg_resources
 # ─────────────────────────────────────────────
 # Auto-install missing packages
 # ─────────────────────────────────────────────
-required = {"google-api-python-client", "google-auth", "gdown", "huggingface_hub"}
+required = {"google-api-python-client", "google-auth", "gdown", "huggingface_hub", "tqdm"}
 installed = {pkg.key for pkg in pkg_resources.working_set}
 missing = required - installed
 if missing:
@@ -18,12 +18,13 @@ from googleapiclient.http import MediaIoBaseDownload
 from google.oauth2.service_account import Credentials
 import gdown
 from huggingface_hub import hf_hub_download
+from tqdm import tqdm
 
 # ─────────────────────────────────────────────
 # Configuration
 # ─────────────────────────────────────────────
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
-SERVICE_ACCOUNT_FILE = 'credentials.json'
+SERVICE_ACCOUNT_FILE = '/workspace/credentials.json'
 
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 
@@ -70,32 +71,51 @@ def get_drive_service():
 
 def list_files_in_folder(service, folder_id):
     query = f"'{folder_id}' in parents and trashed = false"
-    results = service.files().list(q=query, fields="files(id, name)").execute()
+    results = service.files().list(q=query, fields="files(id, name, size)").execute()
     return results.get('files', [])
 
 def download_drive_file(service, file_id, file_name, target_folder):
     request = service.files().get_media(fileId=file_id)
     file_path = os.path.join(target_folder, file_name)
+
+    meta = service.files().get(fileId=file_id, fields="size").execute()
+    total = int(meta.get("size", 0))
+
     with open(file_path, "wb") as f:
-        downloader = MediaIoBaseDownload(f, request)
-        done = False
-        while not done:
-            status, done = downloader.next_chunk()
-            print(f"  {file_name}: {int(status.progress() * 100)}%", flush=True)
-    print(f"  -> {file_name} downloaded.")
+        downloader = MediaIoBaseDownload(f, request, chunksize=8 * 1024 * 1024)
+        with tqdm(
+            total=total,
+            unit="B",
+            unit_scale=True,
+            unit_divisor=1024,
+            desc=f"  {file_name[:40]}",
+            colour="green",
+            leave=True,
+        ) as pbar:
+            done = False
+            downloaded = 0
+            while not done:
+                status, done = downloader.next_chunk()
+                new = int(status.resumable_progress) - downloaded
+                pbar.update(new)
+                downloaded += new
 
 def sync_drive_folder(service, folder_id, target_folder):
     """Smart sync — only downloads files not already present locally."""
     os.makedirs(target_folder, exist_ok=True)
     drive_files = list_files_in_folder(service, folder_id)
     local_files = set(os.listdir(target_folder))
-    print(f"  {len(drive_files)} files in Drive, {len(local_files)} files local")
-    for f in drive_files:
-        if f['name'] not in local_files:
-            print(f"  Downloading: {f['name']}")
-            download_drive_file(service, f['id'], f['name'], target_folder)
-        else:
-            print(f"  Skipping (exists): {f['name']}")
+
+    to_download = [f for f in drive_files if f['name'] not in local_files]
+    to_skip = [f for f in drive_files if f['name'] in local_files]
+
+    print(f"  {len(drive_files)} in Drive | {len(to_skip)} already local | {len(to_download)} to download")
+
+    for f in to_skip:
+        tqdm.write(f"  ✓ {f['name']}")
+
+    for f in to_download:
+        download_drive_file(service, f['id'], f['name'], target_folder)
 
 # ─────────────────────────────────────────────
 # HuggingFace helpers
@@ -104,11 +124,11 @@ def download_hf_model(repo_id, filename, output_dir, token):
     os.makedirs(output_dir, exist_ok=True)
     dest = os.path.join(output_dir, filename)
     if os.path.exists(dest):
-        print(f"  Skipping (exists): {filename}")
+        print(f"  ✓ {filename} (already exists)")
         return
-    print(f"  Downloading {filename} from {repo_id} ...")
+    print(f"  Downloading {filename}...")
     try:
-        downloaded = hf_hub_download(
+        hf_hub_download(
             repo_id=repo_id,
             filename=filename,
             token=token,
@@ -116,33 +136,37 @@ def download_hf_model(repo_id, filename, output_dir, token):
             local_dir=output_dir,
             local_dir_use_symlinks=False,
         )
-        print(f"  -> Downloaded: {downloaded}")
+        print(f"  ✓ {filename} done.")
     except Exception as e:
-        print(f"  ERROR downloading {filename}: {e}")
+        print(f"  ✗ ERROR: {filename}: {e}")
         if "401" in str(e) or "403" in str(e):
-            print("  Tip: Check your HF_TOKEN is valid and you have access to this repo.")
+            print("    Tip: Check HF_TOKEN is valid and you have access to this repo.")
 
 # ─────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────
 if __name__ == "__main__":
 
+    print("\n" + "═" * 50)
+    print("  WanStudio Model Sync")
+    print("═" * 50)
+
     # 1. LoRAs — smart sync via service account
-    print("\n=== Syncing LoRAs (service account) ===")
+    print("\n── LoRAs (Google Drive) ──")
     service = get_drive_service()
     sync_drive_folder(service, GDRIVE_LORA_FOLDER_ID, GDRIVE_LORA_TARGET)
 
     # 2. Extra folders — bulk sync via gdown
-    print("\n=== Syncing extra folders (gdown) ===")
+    print("\n── Extra Folders (gdown) ──")
     for folder_id, target_dir in GDRIVE_EXTRA_FOLDERS:
-        print(f"\n  -> {target_dir}")
+        print(f"\n  {target_dir}")
         os.makedirs(target_dir, exist_ok=True)
         gdown.download_folder(id=folder_id, output=target_dir, quiet=False)
 
     # 3. HuggingFace models
-    print("\n=== Downloading HuggingFace models ===")
+    print("\n── HuggingFace Models ──")
     for model in HF_MODELS:
-        print(f"\n  {model['filename']}")
+        print(f"\n  [{model['repo_id']}]")
         download_hf_model(
             repo_id=model["repo_id"],
             filename=model["filename"],
@@ -150,4 +174,6 @@ if __name__ == "__main__":
             token=HF_TOKEN,
         )
 
-    print("\n✅ All downloads complete.")
+    print("\n" + "═" * 50)
+    print("  ✅ All downloads complete.")
+    print("═" * 50 + "\n")
