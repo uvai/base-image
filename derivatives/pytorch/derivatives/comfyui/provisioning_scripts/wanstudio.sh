@@ -208,16 +208,28 @@ function provisioning_setup_ssh() {
 #   -e GDRIVE_CREDENTIALS_B64="<output>"
 # ─────────────────────────────────────────────
 function provisioning_setup_gdrive() {
+    CREDENTIALS_GDRIVE_ID="1ApjSni6rzkeWT9u2XPcPvDPtpNmWA10h"
+
+    # Try base64 env var first
     if [[ -n "$GDRIVE_CREDENTIALS_B64" ]]; then
-        echo "Decoding Google Drive credentials..."
+        echo "Decoding Google Drive credentials from env var..."
         echo "$GDRIVE_CREDENTIALS_B64" | base64 -d > /workspace/credentials.json
         chmod 600 /workspace/credentials.json
-        echo "credentials.json written to /workspace/credentials.json"
-    elif [[ -f /workspace/credentials.json ]]; then
-        echo "Found existing /workspace/credentials.json — using it."
+    fi
+
+    # Validate — if missing or invalid JSON, fall back to gdown
+    if ! python3 -c "import json; json.load(open('/workspace/credentials.json'))" 2>/dev/null; then
+        echo "credentials.json missing or invalid — downloading from Google Drive..."
+        pip install -q gdown
+        gdown --id "$CREDENTIALS_GDRIVE_ID" -O /workspace/credentials.json
+        chmod 600 /workspace/credentials.json
+    fi
+
+    # Final check
+    if python3 -c "import json; json.load(open('/workspace/credentials.json'))" 2>/dev/null; then
+        echo "credentials.json is valid."
     else
-        echo "WARNING: No GDRIVE_CREDENTIALS_B64 env var and no credentials.json found."
-        echo "Skipping Google Drive sync. Upload credentials.json manually and re-run vlora3.py."
+        echo "WARNING: credentials.json still invalid after fallback. GDrive sync will fail."
         return 1
     fi
 }
