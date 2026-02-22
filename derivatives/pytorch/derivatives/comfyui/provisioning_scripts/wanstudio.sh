@@ -96,20 +96,10 @@ CONTROLNET_MODELS=(
 )
 
 # ─────────────────────────────────────────────
-# Google Drive folder IDs
-# These map to your existing Drive folders
+# Google Drive folder IDs and HuggingFace models
+# are managed in vlora3.py — edit that file to
+# add or remove models/folders.
 # ─────────────────────────────────────────────
-
-# Service-account authenticated folder (LoRAs)
-GDRIVE_LORA_FOLDER_ID="1U9_NyeTn-1LJH1UoEhOyvnbaUmBmyxDZ"
-GDRIVE_LORA_TARGET="${COMFYUI_DIR}/models/loras"
-
-# gdown folders (checkpoints, upscale, clip_vision)
-GDRIVE_EXTRA_FOLDERS=(
-    "1cRab0HpIYpgWge3iyT7IT_XyD8sPZuRI:${COMFYUI_DIR}/models/checkpoints"
-    "1p-zHOOg3NswIOVdqBCZD96DiyAmOYswe:${COMFYUI_DIR}/models/upscale_models"
-    "10OTIVt0ITyRP0IAXy_w_aq0EDwU_N3Au:${COMFYUI_DIR}/models/clip_vision"
-)
 
 # SSH public key — paste your public key here
 # Generate with: ssh-keygen -t ed25519 -C "wanstudio"
@@ -233,8 +223,27 @@ function provisioning_setup_gdrive() {
 }
 
 # ─────────────────────────────────────────────
-# Google Drive Sync
-# Downloads missing files from your Drive folders
+# Download vlora3.py from GitHub
+# This script handles all GDrive + HuggingFace
+# model downloads. Update it in the repo to
+# add new models without touching this file.
+# ─────────────────────────────────────────────
+function provisioning_get_vlora_script() {
+    echo "Downloading vlora3.py from GitHub..."
+    wget -q -O /workspace/vlora3.py \
+        https://raw.githubusercontent.com/uvai/base-image/refs/heads/main/derivatives/pytorch/derivatives/comfyui/provisioning_scripts/vlora3.py
+    if [[ $? -eq 0 ]]; then
+        chmod +x /workspace/vlora3.py
+        echo "vlora3.py downloaded to /workspace/vlora3.py"
+    else
+        echo "WARNING: Failed to download vlora3.py from GitHub."
+        return 1
+    fi
+}
+
+# ─────────────────────────────────────────────
+# Google Drive + HuggingFace Sync
+# Delegates to vlora3.py for all downloads
 # ─────────────────────────────────────────────
 function provisioning_sync_gdrive() {
     if [[ ! -f /workspace/credentials.json ]]; then
@@ -242,80 +251,11 @@ function provisioning_sync_gdrive() {
         return 1
     fi
 
-    echo "Starting Google Drive sync..."
+    provisioning_get_vlora_script || return 1
 
-    python3 << PYEOF
-import os, sys
-
-try:
-    from googleapiclient.discovery import build
-    from googleapiclient.http import MediaIoBaseDownload
-    from google.oauth2.service_account import Credentials
-    import gdown
-except ImportError as e:
-    print(f"Missing package: {e}. Run pip install google-api-python-client google-auth gdown")
-    sys.exit(1)
-
-import io
-
-SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
-SERVICE_ACCOUNT_FILE = '/workspace/credentials.json'
-
-def get_drive_service():
-    creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
-    return build('drive', 'v3', credentials=creds)
-
-def list_files_in_folder(service, folder_id):
-    query = f"'{folder_id}' in parents and trashed = false"
-    results = service.files().list(q=query, fields="files(id, name)").execute()
-    return results.get('files', [])
-
-def download_file(service, file_id, file_name, target_folder):
-    request = service.files().get_media(fileId=file_id)
-    file_path = os.path.join(target_folder, file_name)
-    with open(file_path, "wb") as f:
-        downloader = MediaIoBaseDownload(f, request)
-        done = False
-        while not done:
-            status, done = downloader.next_chunk()
-            print(f"  {file_name}: {int(status.progress() * 100)}%", flush=True)
-    print(f"  -> {file_name} downloaded.")
-
-def sync_folder(service, folder_id, target_folder):
-    os.makedirs(target_folder, exist_ok=True)
-    drive_files = list_files_in_folder(service, folder_id)
-    local_files = set(os.listdir(target_folder))
-    print(f"\n[GDrive] {len(drive_files)} files in folder -> {target_folder}")
-    for f in drive_files:
-        if f['name'] not in local_files:
-            print(f"  Downloading: {f['name']}")
-            download_file(service, f['id'], f['name'], target_folder)
-        else:
-            print(f"  Skipping (exists): {f['name']}")
-
-# --- Service account sync (LoRAs) ---
-print("\n=== Syncing LoRAs via service account ===")
-service = get_drive_service()
-sync_folder(service, "${GDRIVE_LORA_FOLDER_ID}", "${GDRIVE_LORA_TARGET}")
-
-# --- gdown sync (checkpoints, upscale, clip_vision) ---
-print("\n=== Syncing extra folders via gdown ===")
-extra_folders = [
-$(for entry in "${GDRIVE_EXTRA_FOLDERS[@]}"; do
-    folder_id="${entry%%:*}"
-    target_dir="${entry##*:}"
-    echo "    (\"${folder_id}\", \"${target_dir}\"),"
-done)
-]
-for folder_id, target_dir in extra_folders:
-    os.makedirs(target_dir, exist_ok=True)
-    print(f"\n[gdown] Syncing folder {folder_id} -> {target_dir}")
-    gdown.download_folder(id=folder_id, output=target_dir, quiet=False, skip_download=False)
-
-print("\nGoogle Drive sync complete.")
-PYEOF
-
-    echo "GDrive sync finished."
+    echo "Running vlora3.py..."
+    python3 /workspace/vlora3.py
+    echo "vlora3.py complete."
 }
 
 function provisioning_get_apt_packages() {
