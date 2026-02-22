@@ -25,7 +25,7 @@ from huggingface_hub import hf_hub_download
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 SERVICE_ACCOUNT_FILE = 'credentials.json'
 
-HF_TOKEN = os.environ.get("HF_TOKEN", "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")
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
 
 # Google Drive folder IDs
 GDRIVE_LORA_FOLDER_ID = "1U9_NyeTn-1LJH1UoEhOyvnbaUmBmyxDZ"
