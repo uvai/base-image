@@ -13,10 +13,10 @@ if missing:
 
 import os
 import io
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from google.oauth2.service_account import Credentials
-import gdown
 from huggingface_hub import hf_hub_download
 from tqdm import tqdm
 
@@ -27,6 +27,8 @@ SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 SERVICE_ACCOUNT_FILE = '/workspace/gdrive_auth.json'
 
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
+
+PARALLEL_DOWNLOADS = 4  # concurrent downloads
 
 # Google Drive folder IDs
 GDRIVE_LORA_FOLDER_ID = "1U9_NyeTn-1LJH1UoEhOyvnbaUmBmyxDZ"
@@ -82,7 +84,7 @@ def download_drive_file(service, file_id, file_name, target_folder):
     total = int(meta.get("size", 0))
 
     with open(file_path, "wb") as f:
-        downloader = MediaIoBaseDownload(f, request, chunksize=8 * 1024 * 1024)
+        downloader = MediaIoBaseDownload(f, request, chunksize=16 * 1024 * 1024)
         with tqdm(
             total=total,
             unit="B",
@@ -100,8 +102,8 @@ def download_drive_file(service, file_id, file_name, target_folder):
                 pbar.update(new)
                 downloaded += new
 
-def sync_drive_folder(service, folder_id, target_folder):
-    """Smart sync — only downloads files not already present locally."""
+def sync_drive_folder_parallel(service, folder_id, target_folder, workers=PARALLEL_DOWNLOADS):
+    """Parallel sync — downloads multiple files simultaneously."""
     os.makedirs(target_folder, exist_ok=True)
     drive_files = list_files_in_folder(service, folder_id)
     local_files = set(os.listdir(target_folder))
@@ -114,8 +116,24 @@ def sync_drive_folder(service, folder_id, target_folder):
     for f in to_skip:
         tqdm.write(f"  ✓ {f['name']}")
 
-    for f in to_download:
-        download_drive_file(service, f['id'], f['name'], target_folder)
+    if not to_download:
+        return
+
+    def _download(f):
+        try:
+            # Each thread needs its own service instance
+            svc = get_drive_service()
+            download_drive_file(svc, f['id'], f['name'], target_folder)
+            return f['name'], None
+        except Exception as e:
+            return f['name'], str(e)
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(_download, f): f['name'] for f in to_download}
+        for future in as_completed(futures):
+            name, error = future.result()
+            if error:
+                tqdm.write(f"  ✗ ERROR {name}: {error}")
 
 # ─────────────────────────────────────────────
 # HuggingFace helpers
@@ -151,17 +169,17 @@ if __name__ == "__main__":
     print("  WanStudio Model Sync")
     print("═" * 50)
 
-    # 1. LoRAs — smart sync via service account
-    print("\n── LoRAs (Google Drive) ──")
     service = get_drive_service()
-    sync_drive_folder(service, GDRIVE_LORA_FOLDER_ID, GDRIVE_LORA_TARGET)
 
-    # 2. Extra folders — bulk sync via gdown
-    print("\n── Extra Folders (gdown) ──")
+    # 1. LoRAs
+    print("\n── LoRAs (Google Drive) ──")
+    sync_drive_folder_parallel(service, GDRIVE_LORA_FOLDER_ID, GDRIVE_LORA_TARGET)
+
+    # 2. Extra folders — all via parallel service account API
+    print("\n── Extra Folders (Google Drive) ──")
     for folder_id, target_dir in GDRIVE_EXTRA_FOLDERS:
         print(f"\n  {target_dir}")
-        os.makedirs(target_dir, exist_ok=True)
-        gdown.download_folder(id=folder_id, output=target_dir, quiet=False)
+        sync_drive_folder_parallel(service, folder_id, target_dir)
 
     # 3. HuggingFace models
     print("\n── HuggingFace Models ──")
