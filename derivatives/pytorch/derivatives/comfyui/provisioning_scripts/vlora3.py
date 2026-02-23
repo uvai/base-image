@@ -24,7 +24,7 @@ from tqdm import tqdm
 # Configuration
 # ─────────────────────────────────────────────
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
-SERVICE_ACCOUNT_FILE = '/workspace/credentials.json'
+SERVICE_ACCOUNT_FILE = '/workspace/gdrive_auth.json'
 
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 
