@@ -217,18 +217,18 @@ function provisioning_setup_gdrive() {
     if [[ -n "$GDRIVE_CREDENTIALS_B64" ]]; then
         echo "Decoding Google Drive credentials from env var..."
         echo "$GDRIVE_CREDENTIALS_B64" | base64 -d > /workspace/gdrive_auth.json
-        chmod 600 /workspace/credentials.json
+        chmod 600 /workspace/gdrive_auth.json
     fi
 
     # Validate — if missing or invalid JSON, fall back to gdown
     if ! python3 -c "import json; json.load(open('/workspace/gdrive_auth.json'))" 2>/dev/null; then
-        echo "credentials.json missing or invalid — downloading from Google Drive..."
+        echo "gdrive_auth.json missing or invalid — downloading from Google Drive..."
         gdown --id "$CREDENTIALS_GDRIVE_ID" -O /workspace/gdrive_auth.json
-        chmod 600 /workspace/credentials.json
+        chmod 600 /workspace/gdrive_auth.json
     fi
 
     # Final check
-    if python3 -c "import json; json.load(open('/workspace/credentials.json'))" 2>/dev/null; then
+    if python3 -c "import json; json.load(open('/workspace/gdrive_auth.json'))" 2>/dev/null; then
         echo "gdrive_auth.json is valid."
     else
         echo "WARNING: gdrive_auth.json still invalid after fallback. GDrive sync will fail."
@@ -260,8 +260,8 @@ function provisioning_get_vlora_script() {
 # Delegates to vlora3.py for all downloads
 # ─────────────────────────────────────────────
 function provisioning_sync_gdrive() {
-    if [[ ! -f /workspace/credentials.json ]]; then
-        echo "Skipping GDrive sync — no credentials.json."
+    if [[ ! -f /workspace/gdrive_auth.json ]]; then
+        echo "Skipping GDrive sync — no gdrive_auth.json."
         return 1
     fi
 
