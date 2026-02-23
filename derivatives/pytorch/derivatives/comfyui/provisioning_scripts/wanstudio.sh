@@ -208,7 +208,7 @@ function provisioning_setup_ssh() {
 #   -e GDRIVE_CREDENTIALS_B64="<output>"
 # ─────────────────────────────────────────────
 function provisioning_setup_gdrive() {
-    CREDENTIALS_GDRIVE_ID="1Q1BAqGaLWCQjwhZEfJH1w8Z3Q9ZVz9fJ"
+    CREDENTIALS_GDRIVE_ID="1akurAPebSquq5vmedB_ZRygoX-KKffRC"
 
     # Ensure gdown is available
     pip install -q gdown
