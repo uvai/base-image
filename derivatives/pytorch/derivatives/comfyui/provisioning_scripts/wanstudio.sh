@@ -125,8 +125,8 @@ function provisioning_start() {
 
     provisioning_print_header
     provisioning_get_apt_packages
-    provisioning_get_nodes
     provisioning_get_pip_packages
+    provisioning_get_nodes
     provisioning_setup_ssh
     provisioning_setup_gdrive
     provisioning_sync_gdrive
@@ -210,6 +210,9 @@ function provisioning_setup_ssh() {
 function provisioning_setup_gdrive() {
     CREDENTIALS_GDRIVE_ID="1HibOTKsd-eyLhdfne-Si5jTqjKnoRw97"
 
+    # Ensure gdown is available
+    pip install -q gdown
+
     # Try base64 env var first
     if [[ -n "$GDRIVE_CREDENTIALS_B64" ]]; then
         echo "Decoding Google Drive credentials from env var..."
@@ -220,7 +223,6 @@ function provisioning_setup_gdrive() {
     # Validate — if missing or invalid JSON, fall back to gdown
     if ! python3 -c "import json; json.load(open('/workspace/credentials.json'))" 2>/dev/null; then
         echo "credentials.json missing or invalid — downloading from Google Drive..."
-        pip install -q gdown
         gdown --id "$CREDENTIALS_GDRIVE_ID" -O /workspace/credentials.json
         chmod 600 /workspace/credentials.json
     fi
