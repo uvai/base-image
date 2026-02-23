@@ -216,7 +216,7 @@ function provisioning_setup_gdrive() {
     # Try base64 env var first
     if [[ -n "$GDRIVE_CREDENTIALS_B64" ]]; then
         echo "Decoding Google Drive credentials from env var..."
-        echo "$GDRIVE_CREDENTIALS_B64" | base64 -d > /workspace/credentials.json
+        echo "$GDRIVE_CREDENTIALS_B64" | base64 -d > /workspace/gdrive_auth.json
         chmod 600 /workspace/credentials.json
     fi
 
