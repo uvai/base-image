@@ -28,7 +28,7 @@ SERVICE_ACCOUNT_FILE = '/workspace/gdrive_auth.json'
 
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
 
-PARALLEL_DOWNLOADS = 4  # concurrent downloads
+PARALLEL_DOWNLOADS = 8  # concurrent downloads
 
 # Google Drive folder IDs
 GDRIVE_LORA_FOLDER_ID = "1U9_NyeTn-1LJH1UoEhOyvnbaUmBmyxDZ"
@@ -38,6 +38,7 @@ GDRIVE_EXTRA_FOLDERS = [
     ("1cRab0HpIYpgWge3iyT7IT_XyD8sPZuRI", "/workspace/ComfyUI/models/checkpoints"),
     ("1p-zHOOg3NswIOVdqBCZD96DiyAmOYswe", "/workspace/ComfyUI/models/upscale_models"),
     ("10OTIVt0ITyRP0IAXy_w_aq0EDwU_N3Au", "/workspace/ComfyUI/models/clip_vision"),
+    ("1_aB1hCyLP61FMX-IcGsNc-HOLhFamfFb", "/workspace"),
 ]
 
 # HuggingFace models
