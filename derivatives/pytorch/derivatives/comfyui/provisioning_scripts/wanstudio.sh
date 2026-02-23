@@ -48,7 +48,6 @@ NODES=(
 )
 
 CHECKPOINT_MODELS=(
-    "https://huggingface.co/TheImposterImposters/LazyMix-v4.0-inpainting/resolve/main/lazymixRealAmateur_v40Inpainting.safetensors"
 )
 
 UNET_MODELS=(
@@ -108,8 +107,23 @@ SSH_PUBLIC_KEY=""
 
 ### DO NOT EDIT BELOW HERE UNLESS YOU KNOW WHAT YOU ARE DOING ###
 
+function provisioning_speedtest() {
+    printf "\n\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n"
+    printf "\033[1;33m  🌐 NETWORK SPEED TEST — if too slow, destroy now!\033[0m\n"
+    printf "\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n"
+    local speed
+    speed=$(curl -s --max-time 10 -w "%{speed_download}" -o /dev/null https://speed.hetzner.de/100MB.bin 2>/dev/null || echo "0")
+    local mbps
+    mbps=$(echo "scale=1; $speed / 1048576 * 8" | bc 2>/dev/null || echo "?")
+    printf "\033[1;33m  Download speed: \033[1;32m${mbps} Mbps\033[0m\n"
+    printf "\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n\n"
+}
+
 function provisioning_start() {
+    PROVISIONING_START_TIME=$(date +%s)
+
     provisioning_print_header
+    provisioning_speedtest
 
     echo "Auto-updating ComfyUI core..."
     if git -C /workspace/ComfyUI rev-parse 2>/dev/null; then
@@ -129,8 +143,6 @@ function provisioning_start() {
     provisioning_get_pip_packages
     provisioning_get_nodes
     provisioning_setup_ssh
-    provisioning_setup_gdrive
-    provisioning_sync_gdrive
 
     provisioning_get_files \
         "${COMFYUI_DIR}/models/checkpoints" \
@@ -162,6 +174,9 @@ function provisioning_start() {
     provisioning_get_files \
         "${COMFYUI_DIR}/models/esrgan" \
         "${ESRGAN_MODELS[@]}"
+
+    provisioning_setup_gdrive
+    provisioning_sync_gdrive
 
     provisioning_print_end
 }
@@ -329,7 +344,14 @@ function provisioning_print_header() {
 }
 
 function provisioning_print_end() {
-    printf "\nProvisioning complete:  Application will start now\n\n"
+    local end_time=$(date +%s)
+    local elapsed=$((end_time - PROVISIONING_START_TIME))
+    local mins=$((elapsed / 60))
+    local secs=$((elapsed % 60))
+    printf "\n\033[1;32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n"
+    printf "\033[1;32m  ✅ Provisioning complete — took %dm %ds\033[0m\n" "$mins" "$secs"
+    printf "\033[1;32m  Application will start now\033[0m\n"
+    printf "\033[1;32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n\n"
 }
 
 function provisioning_has_valid_hf_token() {
