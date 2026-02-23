@@ -48,7 +48,6 @@ NODES=(
 )
 
 CHECKPOINT_MODELS=(
-    "https://huggingface.co/TheImposterImposters/LazyMix-v4.0-inpainting/resolve/main/lazymixRealAmateur_v40Inpainting.safetensors"
 )
 
 UNET_MODELS=(
@@ -109,15 +108,32 @@ SSH_PUBLIC_KEY=""
 ### DO NOT EDIT BELOW HERE UNLESS YOU KNOW WHAT YOU ARE DOING ###
 
 function provisioning_speedtest() {
-    printf "\n\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n"
-    printf "\033[1;33m  🌐 NETWORK SPEED TEST — if too slow, destroy now!\033[0m\n"
-    printf "\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n"
-    local speed
+    local speed mbps
     speed=$(curl -s --max-time 10 -w "%{speed_download}" -o /dev/null https://speed.hetzner.de/100MB.bin 2>/dev/null || echo "0")
-    local mbps
     mbps=$(echo "scale=1; $speed / 1048576 * 8" | bc 2>/dev/null || echo "?")
-    printf "\033[1;33m  Download speed: \033[1;32m${mbps} Mbps\033[0m\n"
-    printf "\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n\n"
+    printf "\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n"
+    printf "\033[1;33m  🌐 Network speed: \033[1;32m${mbps} Mbps\033[0m\033[1;33m  — destroy now if too slow!\033[0m\n"
+    printf "\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n"
+}
+
+function provisioning_start_speed_reminder() {
+    # Print speed every 60 seconds in background so you can catch it scrolling
+    (
+        while true; do
+            sleep 60
+            local speed mbps
+            speed=$(curl -s --max-time 10 -w "%{speed_download}" -o /dev/null https://speed.hetzner.de/100MB.bin 2>/dev/null || echo "0")
+            mbps=$(echo "scale=1; $speed / 1048576 * 8" | bc 2>/dev/null || echo "?")
+            printf "\033[1;33m  🌐 [speed reminder] ${mbps} Mbps\033[0m\n"
+        done
+    ) &
+    SPEED_REMINDER_PID=$!
+}
+
+function provisioning_stop_speed_reminder() {
+    if [[ -n "$SPEED_REMINDER_PID" ]]; then
+        kill "$SPEED_REMINDER_PID" 2>/dev/null
+    fi
 }
 
 function provisioning_start() {
@@ -125,6 +141,7 @@ function provisioning_start() {
 
     provisioning_print_header
     provisioning_speedtest
+    provisioning_start_speed_reminder
 
     echo "Auto-updating ComfyUI core..."
     if git -C /workspace/ComfyUI rev-parse 2>/dev/null; then
@@ -179,6 +196,7 @@ function provisioning_start() {
     provisioning_setup_gdrive
     provisioning_sync_gdrive
 
+    provisioning_stop_speed_reminder
     provisioning_print_end
 }
 
