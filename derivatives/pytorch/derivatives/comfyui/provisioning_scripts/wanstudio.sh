@@ -48,7 +48,6 @@ NODES=(
 )
 
 CHECKPOINT_MODELS=(
-    "https://huggingface.co/TheImposterImposters/LazyMix-v4.0-inpainting/resolve/main/lazymixRealAmateur_v40Inpainting.safetensors"
 )
 
 UNET_MODELS=(
@@ -111,7 +110,7 @@ SSH_PUBLIC_KEY=""
 function provisioning_speedtest() {
     local speed mbps
     speed=$(curl -s --max-time 10 -w "%{speed_download}" -o /dev/null https://speed.hetzner.de/100MB.bin 2>/dev/null || echo "0")
-    mbps=$(echo "scale=1; $speed / 1048576 * 8" | bc 2>/dev/null || echo "?")
+    mbps=$(python3 -c "print(round($speed / 1048576 * 8, 1))" 2>/dev/null || echo "?")
     printf "\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n"
     printf "\033[1;33m  🌐 Network speed: \033[1;32m${mbps} Mbps\033[0m\033[1;33m  — destroy now if too slow!\033[0m\n"
     printf "\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n"
@@ -124,7 +123,7 @@ function provisioning_start_speed_reminder() {
             sleep 60
             local speed mbps
             speed=$(curl -s --max-time 10 -w "%{speed_download}" -o /dev/null https://speed.hetzner.de/100MB.bin 2>/dev/null || echo "0")
-            mbps=$(echo "scale=1; $speed / 1048576 * 8" | bc 2>/dev/null || echo "?")
+            mbps=$(python3 -c "print(round($speed / 1048576 * 8, 1))" 2>/dev/null || echo "?")
             printf "\033[1;33m  🌐 [speed reminder] ${mbps} Mbps\033[0m\n"
         done
     ) &
