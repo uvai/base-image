@@ -48,7 +48,6 @@ NODES=(
 )
 
 CHECKPOINT_MODELS=(
-    "https://huggingface.co/TheImposterImposters/LazyMix-v4.0-inpainting/resolve/main/lazymixRealAmateur_v40Inpainting.safetensors"
 )
 
 UNET_MODELS=(
@@ -110,22 +109,21 @@ SSH_PUBLIC_KEY=""
 
 function provisioning_speedtest() {
     local speed mbps
-    speed=$(curl -s --max-time 10 -w "%{speed_download}" -o /dev/null https://speed.hetzner.de/100MB.bin 2>/dev/null || echo "0")
+    speed=$(curl -s --max-time 15 -w "%{speed_download}" -o /dev/null https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors 2>/dev/null || echo "0")
     mbps=$(python3 -c "print(round($speed / 1048576 * 8, 1))" 2>/dev/null || echo "?")
-    printf "\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n"
-    printf "\033[1;33m  🌐 Network speed: \033[1;32m${mbps} Mbps\033[0m\033[1;33m  — destroy now if too slow!\033[0m\n"
-    printf "\033[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n"
+    echo -e "\e[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m"
+    echo -e "\e[1;33m  🌐 Network speed: \e[1;32m${mbps} Mbps\e[0m\e[1;33m  — destroy now if too slow!\e[0m"
+    echo -e "\e[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m"
 }
 
 function provisioning_start_speed_reminder() {
-    # Print speed every 60 seconds in background so you can catch it scrolling
     (
         while true; do
-            sleep 60
+            sleep 30
             local speed mbps
-            speed=$(curl -s --max-time 10 -w "%{speed_download}" -o /dev/null https://speed.hetzner.de/100MB.bin 2>/dev/null || echo "0")
+            speed=$(curl -s --max-time 15 -w "%{speed_download}" -o /dev/null https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors 2>/dev/null || echo "0")
             mbps=$(python3 -c "print(round($speed / 1048576 * 8, 1))" 2>/dev/null || echo "?")
-            printf "\033[1;33m  🌐 [speed reminder] ${mbps} Mbps\033[0m\n"
+            echo -e "\e[1;33m  🌐 [speed reminder] ${mbps} Mbps\e[0m"
         done
     ) &
     SPEED_REMINDER_PID=$!
@@ -368,10 +366,10 @@ function provisioning_print_end() {
     local elapsed=$((end_time - PROVISIONING_START_TIME))
     local mins=$((elapsed / 60))
     local secs=$((elapsed % 60))
-    printf "\n\033[1;32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n"
-    printf "\033[1;32m  ✅ Provisioning complete — took %dm %ds\033[0m\n" "$mins" "$secs"
-    printf "\033[1;32m  Application will start now\033[0m\n"
-    printf "\033[1;32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m\n\n"
+    echo -e "\n\e[1;32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m"
+    echo -e "\e[1;32m  ✅ Provisioning complete — took ${mins}m ${secs}s\e[0m"
+    echo -e "\e[1;32m  Application will start now\e[0m"
+    echo -e "\e[1;32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m\n"
 }
 
 function provisioning_has_valid_hf_token() {
