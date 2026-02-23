@@ -221,17 +221,17 @@ function provisioning_setup_gdrive() {
     fi
 
     # Validate — if missing or invalid JSON, fall back to gdown
-    if ! python3 -c "import json; json.load(open('/workspace/credentials.json'))" 2>/dev/null; then
+    if ! python3 -c "import json; json.load(open('/workspace/gdrive_auth.json'))" 2>/dev/null; then
         echo "credentials.json missing or invalid — downloading from Google Drive..."
-        gdown --id "$CREDENTIALS_GDRIVE_ID" -O /workspace/credentials.json
+        gdown --id "$CREDENTIALS_GDRIVE_ID" -O /workspace/gdrive_auth.json
         chmod 600 /workspace/credentials.json
     fi
 
     # Final check
     if python3 -c "import json; json.load(open('/workspace/credentials.json'))" 2>/dev/null; then
-        echo "credentials.json is valid."
+        echo "gdrive_auth.json is valid."
     else
-        echo "WARNING: credentials.json still invalid after fallback. GDrive sync will fail."
+        echo "WARNING: gdrive_auth.json still invalid after fallback. GDrive sync will fail."
         return 1
     fi
 }
