@@ -48,6 +48,7 @@ NODES=(
 )
 
 CHECKPOINT_MODELS=(
+    "https://huggingface.co/TheImposterImposters/LazyMix-v4.0-inpainting/resolve/main/lazymixRealAmateur_v40Inpainting.safetensors"
 )
 
 UNET_MODELS=(
