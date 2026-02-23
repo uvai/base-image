@@ -208,7 +208,7 @@ function provisioning_setup_ssh() {
 #   -e GDRIVE_CREDENTIALS_B64="<output>"
 # ─────────────────────────────────────────────
 function provisioning_setup_gdrive() {
-    CREDENTIALS_GDRIVE_ID="1ApjSni6rzkeWT9u2XPcPvDPtpNmWA10h"
+    CREDENTIALS_GDRIVE_ID="1HibOTKsd-eyLhdfne-Si5jTqjKnoRw97"
 
     # Try base64 env var first
     if [[ -n "$GDRIVE_CREDENTIALS_B64" ]]; then
