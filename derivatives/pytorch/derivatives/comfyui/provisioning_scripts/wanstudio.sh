@@ -107,40 +107,10 @@ SSH_PUBLIC_KEY=""
 
 ### DO NOT EDIT BELOW HERE UNLESS YOU KNOW WHAT YOU ARE DOING ###
 
-function provisioning_speedtest() {
-    local speed mbps
-    speed=$(curl -s --max-time 15 -w "%{speed_download}" -o /dev/null https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors 2>/dev/null || echo "0")
-    mbps=$(python3 -c "print(round($speed / 1048576 * 8, 1))" 2>/dev/null || echo "?")
-    echo -e "\e[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m"
-    echo -e "\e[1;33m  🌐 Network speed: \e[1;32m${mbps} Mbps\e[0m\e[1;33m  — destroy now if too slow!\e[0m"
-    echo -e "\e[1;33m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m"
-}
-
-function provisioning_start_speed_reminder() {
-    (
-        while true; do
-            sleep 30
-            local speed mbps
-            speed=$(curl -s --max-time 15 -w "%{speed_download}" -o /dev/null https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors 2>/dev/null || echo "0")
-            mbps=$(python3 -c "print(round($speed / 1048576 * 8, 1))" 2>/dev/null || echo "?")
-            echo -e "\e[1;33m  🌐 [speed reminder] ${mbps} Mbps\e[0m"
-        done
-    ) &
-    SPEED_REMINDER_PID=$!
-}
-
-function provisioning_stop_speed_reminder() {
-    if [[ -n "$SPEED_REMINDER_PID" ]]; then
-        kill "$SPEED_REMINDER_PID" 2>/dev/null
-    fi
-}
-
 function provisioning_start() {
     PROVISIONING_START_TIME=$(date +%s)
 
     provisioning_print_header
-    provisioning_speedtest
-    provisioning_start_speed_reminder
 
     echo "Auto-updating ComfyUI core..."
     if git -C /workspace/ComfyUI rev-parse 2>/dev/null; then
@@ -195,7 +165,6 @@ function provisioning_start() {
     provisioning_setup_gdrive
     provisioning_sync_gdrive
 
-    provisioning_stop_speed_reminder
     provisioning_print_end
 }
 
