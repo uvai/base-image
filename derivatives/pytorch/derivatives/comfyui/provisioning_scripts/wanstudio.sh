@@ -130,6 +130,7 @@ function provisioning_start() {
     provisioning_get_pip_packages
     provisioning_get_nodes
     provisioning_setup_ssh
+    provisioning_setup_jupyter_theme
 
     provisioning_get_files \
         "${COMFYUI_DIR}/models/checkpoints" \
@@ -166,6 +167,17 @@ function provisioning_start() {
     provisioning_sync_gdrive
 
     provisioning_print_end
+}
+
+function provisioning_setup_jupyter_theme() {
+    echo "Setting JupyterLab dark theme..."
+    mkdir -p /root/.jupyter/lab/user-settings/@jupyterlab/apputils-extension
+    cat > /root/.jupyter/lab/user-settings/@jupyterlab/apputils-extension/themes.jupyterlab-settings << 'EOF'
+{
+    "theme": "JupyterLab Dark"
+}
+EOF
+    echo "JupyterLab dark theme set."
 }
 
 # ─────────────────────────────────────────────
