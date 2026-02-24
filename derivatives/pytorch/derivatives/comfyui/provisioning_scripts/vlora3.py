@@ -74,67 +74,84 @@ def get_drive_service():
 
 def list_files_in_folder(service, folder_id):
     query = f"'{folder_id}' in parents and trashed = false"
-    results = service.files().list(q=query, fields="files(id, name, size)").execute()
+    results = service.files().list(q=query, fields="files(id, name, size, mimeType)").execute()
     return results.get('files', [])
 
-def download_drive_file(service, file_id, file_name, target_folder):
+def sync_drive_folder_recursive(service, folder_id, target_folder, workers=8):
+    """Recursively sync a Drive folder, handling subfolders."""
+    os.makedirs(target_folder, exist_ok=True)
+    all_files = list_files_in_folder(service, folder_id)
+
+    files = [f for f in all_files if f.get('mimeType') != 'application/vnd.google-apps.folder']
+    subfolders = [f for f in all_files if f.get('mimeType') == 'application/vnd.google-apps.folder']
+
+    local_files = set(os.listdir(target_folder))
+    to_download = [f for f in files if f['name'] not in local_files]
+    to_skip = [f for f in files if f['name'] in local_files]
+
+    if files or subfolders:
+        print(f"  {len(files)} files | {len(subfolders)} subfolders | {len(to_skip)} already local | {len(to_download)} to download")
+
+    for f in to_skip:
+        tqdm.write(f"  ✓ {f['name']}")
+
+    def _download(f):
+        try:
+            svc = get_drive_service()
+            download_drive_file(svc, f['id'], f['name'], target_folder, show_progress=(workers == 1))
+            return f['name'], None
+        except Exception as e:
+            return f['name'], str(e)
+
+    if to_download:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(_download, f): f['name'] for f in to_download}
+            for future in as_completed(futures):
+                name, error = future.result()
+                if error:
+                    tqdm.write(f"  ✗ ERROR {name}: {error}")
+
+    # Recurse into subfolders
+    for subfolder in subfolders:
+        sub_path = os.path.join(target_folder, subfolder['name'])
+        print(f"  📁 {subfolder['name']}/")
+        sync_drive_folder_recursive(service, subfolder['id'], sub_path, workers)
+
+def download_drive_file(service, file_id, file_name, target_folder, show_progress=True):
     request = service.files().get_media(fileId=file_id)
     file_path = os.path.join(target_folder, file_name)
 
     meta = service.files().get(fileId=file_id, fields="size").execute()
     total = int(meta.get("size", 0))
+    total_mb = round(total / 1048576, 1)
 
     with open(file_path, "wb") as f:
         downloader = MediaIoBaseDownload(f, request, chunksize=16 * 1024 * 1024)
-        with tqdm(
-            total=total,
-            unit="B",
-            unit_scale=True,
-            unit_divisor=1024,
-            desc=f"  {file_name[:40]}",
-            colour="green",
-            leave=True,
-        ) as pbar:
+        if show_progress:
+            with tqdm(
+                total=total,
+                unit="B",
+                unit_scale=True,
+                unit_divisor=1024,
+                desc=f"  {file_name[:40]}",
+                colour="green",
+                leave=True,
+            ) as pbar:
+                done = False
+                downloaded = 0
+                while not done:
+                    status, done = downloader.next_chunk()
+                    new = int(status.resumable_progress) - downloaded
+                    pbar.update(new)
+                    downloaded += new
+        else:
             done = False
-            downloaded = 0
             while not done:
-                status, done = downloader.next_chunk()
-                new = int(status.resumable_progress) - downloaded
-                pbar.update(new)
-                downloaded += new
+                _, done = downloader.next_chunk()
+    if not show_progress:
+        print(f"  ✓ {file_name} ({total_mb} MB)")
 
-def sync_drive_folder_parallel(service, folder_id, target_folder, workers=PARALLEL_DOWNLOADS):
-    """Parallel sync — downloads multiple files simultaneously."""
-    os.makedirs(target_folder, exist_ok=True)
-    drive_files = list_files_in_folder(service, folder_id)
-    local_files = set(os.listdir(target_folder))
 
-    to_download = [f for f in drive_files if f['name'] not in local_files]
-    to_skip = [f for f in drive_files if f['name'] in local_files]
-
-    print(f"  {len(drive_files)} in Drive | {len(to_skip)} already local | {len(to_download)} to download")
-
-    for f in to_skip:
-        tqdm.write(f"  ✓ {f['name']}")
-
-    if not to_download:
-        return
-
-    def _download(f):
-        try:
-            # Each thread needs its own service instance
-            svc = get_drive_service()
-            download_drive_file(svc, f['id'], f['name'], target_folder)
-            return f['name'], None
-        except Exception as e:
-            return f['name'], str(e)
-
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {executor.submit(_download, f): f['name'] for f in to_download}
-        for future in as_completed(futures):
-            name, error = future.result()
-            if error:
-                tqdm.write(f"  ✗ ERROR {name}: {error}")
 
 # ─────────────────────────────────────────────
 # HuggingFace helpers
@@ -174,13 +191,13 @@ if __name__ == "__main__":
 
     # 1. LoRAs
     print("\n── LoRAs (Google Drive) ──")
-    sync_drive_folder_parallel(service, GDRIVE_LORA_FOLDER_ID, GDRIVE_LORA_TARGET)
+    sync_drive_folder_recursive(service, GDRIVE_LORA_FOLDER_ID, GDRIVE_LORA_TARGET)
 
     # 2. Extra folders — all via parallel service account API
     print("\n── Extra Folders (Google Drive) ──")
     for folder_id, target_dir in GDRIVE_EXTRA_FOLDERS:
         print(f"\n  {target_dir}")
-        sync_drive_folder_parallel(service, folder_id, target_dir)
+        sync_drive_folder_recursive(service, folder_id, target_dir)
 
     # 3. HuggingFace models
     print("\n── HuggingFace Models ──")
