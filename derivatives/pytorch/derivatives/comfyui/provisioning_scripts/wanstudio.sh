@@ -16,6 +16,7 @@ PIP_PACKAGES=(
     "google-api-python-client"
     "google-auth"
     "gdown"
+    "websocket-client"
 )
 
 NODES=(
