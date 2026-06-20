@@ -42,17 +42,10 @@ GDRIVE_EXTRA_FOLDERS = [
 ]
 
 # HuggingFace models
+# NOTE: FLUX.2 klein entries removed — they are downloaded by wanstudio2.sh into
+# models/diffusion_models. Keeping them here too caused a double-download into
+# models/unet. GIMM-VFI interpolation models remain (only downloaded here).
 HF_MODELS = [
-    {
-        "repo_id": "black-forest-labs/FLUX.2-klein-9B",
-        "filename": "flux-2-klein-9b.safetensors",
-        "output_dir": "/workspace/ComfyUI/models/unet",
-    },
-    {
-        "repo_id": "black-forest-labs/FLUX.2-klein-base-9b-fp8",
-        "filename": "flux-2-klein-base-9b-fp8.safetensors",
-        "output_dir": "/workspace/ComfyUI/models/unet",
-    },
     {
         "repo_id": "Kijai/GIMM-VFI_safetensors",
         "filename": "gimmvfi_f_arb_lpips_fp32.safetensors",
