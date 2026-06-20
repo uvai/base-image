@@ -1,25 +1,28 @@
-!/bin/bash
+#!/bin/bash
+set -e
 
 source /venv/main/bin/activate
-COMFYUI_DIR=${WORKSPACE}/ComfyUI
 
-# Packages are installed after nodes so we can fix them...
+WORKSPACE=${WORKSPACE:-/workspace}
+COMFYUI_DIR="${WORKSPACE}/ComfyUI"
 
 APT_PACKAGES=(
-    "package-1"
-    "package-2"
+    "ffmpeg"
+    "git"
+    "wget"
+    "curl"
 )
 
 PIP_PACKAGES=(
     "av"
     "sqlalchemy"
     "alembic"
+    "nvidia-ml-py"
 )
 
 NODES=(
     "https://github.com/ltdrdata/ComfyUI-Manager"
     "https://github.com/cubiq/ComfyUI_essentials"
-    "https://github.com/welltop-cn/ComfyUI-TeaCache.git"
     "https://github.com/kijai/ComfyUI-KJNodes"
     "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite"
     "https://github.com/rgthree/rgthree-comfy.git"
@@ -35,69 +38,33 @@ NODES=(
     "https://github.com/CY-CHENYUE/ComfyUI-InpaintEasy.git"
     "https://github.com/chflame163/ComfyUI_LayerStyle.git"
     "https://github.com/yolain/ComfyUI-Easy-Use.git"
-    "https://github.com/PozzettiAndrea/ComfyUI-SAM3.git"
     "https://github.com/JPS-GER/ComfyUI_JPS-Nodes.git"
-    "https://github.com/tooldigital/ComfyUI-Yolo-Cropper.git"
     "https://github.com/thalismind/ComfyUI-LoadImageWithFilename.git"
     "https://github.com/city96/ComfyUI-GGUF.git"
-
     "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
-    
-
-
     "https://github.com/crystian/ComfyUI-Crystools.git"
     "https://github.com/ai-joe-git/ComfyUI-Simple-Prompt-Batcher.git"
-    
-    
 )
 
-CHECKPOINT_MODELS=(
-
-
-
-    # "https://huggingface.co/Phr00t/Qwen-Image-Edit-Rapid-AIO/resolve/main/v20/Qwen-Rapid-AIO-NSFW-v20.safetensors"
-
-
-)
-
-UNET_MODELS=(
-
-)
+CHECKPOINT_MODELS=()
+UNET_MODELS=()
+LORA_MODELS=()
+CONTROLNET_MODELS=()
+ESRGAN_MODELS=()
 
 DIFFUSION_MODELS=(
     "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"
     "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"
-
     "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_edit_2511_bf16.safetensors"
-    # "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/diffusion_models/z_image_turbo_bf16.safetensors"
     "https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/resolve/main/flux-2-klein-9b.safetensors"
     "https://huggingface.co/black-forest-labs/FLUX.2-klein-base-9b-fp8/resolve/main/flux-2-klein-base-9b-fp8.safetensors"
-
-
-    
-
-
-    
-
-)
-
-LORA_MODELS=(
-
 )
 
 VAE_MODELS=(
-
     "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"
     "https://huggingface.co/Madespace/vae/resolve/main/ae.sft"
-    # "https://huggingface.co/camenduru/FLUX.1-dev/resolve/d616d290809ffe206732ac4665a9ddcdfb839743/ae.safetensors"
     "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors"
-    # "https://huggingface.co/StableDiffusionVN/Flux/resolve/main/Vae/flux_vae.safetensors"
     "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors"
-    
-)
-
-ESRGAN_MODELS=(
-
 )
 
 UPSCALE_MODELS=(
@@ -106,9 +73,7 @@ UPSCALE_MODELS=(
 
 TEXT_ENCODER_MODELS=(
     "https://huggingface.co/Comfy-Org/HunyuanVideo_repackaged/resolve/main/split_files/text_encoders/clip_l.safetensors"
-
     "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
-
     "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp16.safetensors"
     "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors"
     "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors"
@@ -120,173 +85,129 @@ CLIP_VISION_MODELS=(
     "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors"
 )
 
+function print_header() {
+    echo
+    echo "##############################################"
+    echo "#       Provisioning ComfyUI for RTX 5090     #"
+    echo "##############################################"
+    echo
+}
 
-CONTROLNET_MODELS=(
+function install_apt() {
+    sudo apt-get update
+    sudo apt-get install -y "${APT_PACKAGES[@]}"
+}
 
-)
-
-### DO NOT EDIT BELOW HERE UNLESS YOU KNOW WHAT YOU ARE DOING ###
-function provisioning_start() {
-    provisioning_print_header
-
-    echo "Auto-updating ComfyUI core..."
-    if git -C /workspace/ComfyUI rev-parse 2>/dev/null; then
-        echo "Found git repo, pulling latest ComfyUI..."
-        (cd /workspace/ComfyUI && git pull)
+function update_comfyui() {
+    if git -C "$COMFYUI_DIR" rev-parse 2>/dev/null; then
+        cd "$COMFYUI_DIR"
+        git pull
     else
-        echo "ComfyUI not a git repo or missing. Cloning fresh copy..."
-        rm -rf /workspace/ComfyUI
-        git clone https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI
-    fi
-
-    echo "Installing ComfyUI core requirements..."
-    python -m pip install --no-cache-dir -r /workspace/ComfyUI/requirements.txt
-    
-    provisioning_print_header
-    provisioning_get_apt_packages
-    provisioning_get_nodes
-    provisioning_get_pip_packages
-    # provisioning_install_sageattention
-    provisioning_get_files \
-        "${COMFYUI_DIR}/models/checkpoints" \
-        "${CHECKPOINT_MODELS[@]}"
-    provisioning_get_files \
-        "${COMFYUI_DIR}/models/unet" \
-        "${UNET_MODELS[@]}"
-    provisioning_get_files \
-        "${COMFYUI_DIR}/models/lora" \
-        "${LORA_MODELS[@]}"
-    provisioning_get_files \
-        "${COMFYUI_DIR}/models/controlnet" \
-        "${CONTROLNET_MODELS[@]}"
-    provisioning_get_files \
-        "${COMFYUI_DIR}/models/vae" \
-        "${VAE_MODELS[@]}"
-    provisioning_get_files \
-        "${COMFYUI_DIR}/models/upscale_models" \
-        "${UPSCALE_MODELS[@]}"
-    provisioning_get_files \
-        "${COMFYUI_DIR}/models/diffusion_models" \
-        "${DIFFUSION_MODELS[@]}"
-    provisioning_get_files \
-        "${COMFYUI_DIR}/models/text_encoders" \
-        "${TEXT_ENCODER_MODELS[@]}"
-    provisioning_get_files \
-        "${COMFYUI_DIR}/models/clip_vision" \
-        "${CLIP_VISION_MODELS[@]}"
-    provisioning_get_files \
-        "${COMFYUI_DIR}/models/esrgan" \
-        "${ESRGAN_MODELS[@]}"
-    provisioning_print_end
-}
-
-function provisioning_get_apt_packages() {
-    if [[ -n $APT_PACKAGES ]]; then
-            sudo $APT_INSTALL ${APT_PACKAGES[@]}
+        rm -rf "$COMFYUI_DIR"
+        git clone https://github.com/comfyanonymous/ComfyUI.git "$COMFYUI_DIR"
     fi
 }
 
-function provisioning_get_pip_packages() {
-    if [[ -n $PIP_PACKAGES ]]; then
-            pip install --no-cache-dir ${PIP_PACKAGES[@]}
-    fi
+function install_torch_5090() {
+    echo "Installing PyTorch CUDA 13.0 build for RTX 5090..."
+    python -m pip install --no-cache-dir --upgrade pip
+
+    python -m pip install --no-cache-dir --force-reinstall \
+        torch==2.9.0 torchvision==0.24.0 torchaudio==2.9.0 \
+        --index-url https://download.pytorch.org/whl/cu130
+
+    python - <<'PY'
+import torch
+print("Torch:", torch.__version__)
+print("CUDA runtime:", torch.version.cuda)
+print("CUDA available:", torch.cuda.is_available())
+if torch.cuda.is_available():
+    print("GPU:", torch.cuda.get_device_name(0))
+PY
 }
 
+function install_comfy_requirements() {
+    python -m pip install --no-cache-dir -r "$COMFYUI_DIR/requirements.txt"
+    python -m pip install --no-cache-dir "${PIP_PACKAGES[@]}"
+}
 
-function provisioning_get_nodes() {
+function get_nodes() {
+    mkdir -p "$COMFYUI_DIR/custom_nodes"
+
     for repo in "${NODES[@]}"; do
         dir="${repo##*/}"
+        dir="${dir%.git}"
         path="${COMFYUI_DIR}/custom_nodes/${dir}"
         requirements="${path}/requirements.txt"
-        if [[ -d $path ]]; then
-            if [[ ${AUTO_UPDATE,,} != "false" ]]; then
-                printf "Updating node: %s...\n" "${repo}"
-                ( cd "$path" && git pull )
-                if [[ -e $requirements ]]; then
-                   pip install --no-cache-dir -r "$requirements"
-                fi
-            fi
+
+        if [[ -d "$path" ]]; then
+            echo "Updating node: $repo"
+            cd "$path"
+            git pull || true
         else
-            printf "Downloading node: %s...\n" "${repo}"
-            git clone "${repo}" "${path}" --recursive
-            if [[ -e $requirements ]]; then
-                pip install --no-cache-dir -r "${requirements}"
-            fi
+            echo "Cloning node: $repo"
+            git clone "$repo" "$path" --recursive || true
+        fi
+
+        if [[ -f "$requirements" ]]; then
+            python -m pip install --no-cache-dir -r "$requirements" || true
         fi
     done
 }
 
-function provisioning_get_files() {
-    if [[ -z $2 ]]; then return 1; fi
-    
-    dir="$1"
+function download_file() {
+    url="$1"
+    dir="$2"
     mkdir -p "$dir"
+
+    if [[ -n "$HF_TOKEN" && "$url" =~ ^https://([a-zA-Z0-9_-]+\.)?huggingface\.co(/|$|\?) ]]; then
+        wget --header="Authorization: Bearer $HF_TOKEN" \
+            -qnc --content-disposition --show-progress \
+            -e dotbytes="4M" -P "$dir" "$url"
+    else
+        wget -qnc --content-disposition --show-progress \
+            -e dotbytes="4M" -P "$dir" "$url"
+    fi
+}
+
+function get_files() {
+    dir="$1"
     shift
     arr=("$@")
-    printf "Downloading %s model(s) to %s...\n" "${#arr[@]}" "$dir"
+
+    [[ ${#arr[@]} -eq 0 ]] && return 0
+
+    echo "Downloading ${#arr[@]} model(s) to $dir"
     for url in "${arr[@]}"; do
-        printf "Downloading: %s\n" "${url}"
-        provisioning_download "${url}" "${dir}"
-        printf "\n"
+        echo "Downloading: $url"
+        download_file "$url" "$dir"
     done
 }
 
-function provisioning_print_header() {
-    printf "\n##############################################\n#                                            #\n#          Provisioning container            #\n#                                            #\n#         This will take some time           #\n#                                            #\n# Your container will be ready on completion #\n#                                            #\n##############################################\n\n"
+function provisioning_start() {
+    print_header
+    install_apt
+    update_comfyui
+    install_torch_5090
+    install_comfy_requirements
+    get_nodes
+
+    get_files "${COMFYUI_DIR}/models/checkpoints" "${CHECKPOINT_MODELS[@]}"
+    get_files "${COMFYUI_DIR}/models/unet" "${UNET_MODELS[@]}"
+    get_files "${COMFYUI_DIR}/models/lora" "${LORA_MODELS[@]}"
+    get_files "${COMFYUI_DIR}/models/controlnet" "${CONTROLNET_MODELS[@]}"
+    get_files "${COMFYUI_DIR}/models/vae" "${VAE_MODELS[@]}"
+    get_files "${COMFYUI_DIR}/models/upscale_models" "${UPSCALE_MODELS[@]}"
+    get_files "${COMFYUI_DIR}/models/diffusion_models" "${DIFFUSION_MODELS[@]}"
+    get_files "${COMFYUI_DIR}/models/text_encoders" "${TEXT_ENCODER_MODELS[@]}"
+    get_files "${COMFYUI_DIR}/models/clip_vision" "${CLIP_VISION_MODELS[@]}"
+    get_files "${COMFYUI_DIR}/models/esrgan" "${ESRGAN_MODELS[@]}"
+
+    echo
+    echo "Provisioning complete."
+    echo
 }
 
-function provisioning_print_end() {
-    printf "\nProvisioning complete:  Application will start now\n\n"
-}
-
-function provisioning_has_valid_hf_token() {
-    [[ -n "$HF_TOKEN" ]] || return 1
-    url="https://huggingface.co/api/whoami-v2"
-
-    response=$(curl -o /dev/null -s -w "%{http_code}" -X GET "$url" \
-        -H "Authorization: Bearer $HF_TOKEN" \
-        -H "Content-Type: application/json")
-
-    # Check if the token is valid
-    if [ "$response" -eq 200 ]; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-function provisioning_has_valid_civitai_token() {
-    [[ -n "$CIVITAI_TOKEN" ]] || return 1
-    url="https://civitai.com/api/v1/models?hidden=1&limit=1"
-
-    response=$(curl -o /dev/null -s -w "%{http_code}" -X GET "$url" \
-        -H "Authorization: Bearer $CIVITAI_TOKEN" \
-        -H "Content-Type: application/json")
-
-    # Check if the token is valid
-    if [ "$response" -eq 200 ]; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-# Download from $1 URL to $2 file path
-function provisioning_download() {
-    if [[ -n $HF_TOKEN && $1 =~ ^https://([a-zA-Z0-9_-]+\.)?huggingface\.co(/|$|\?) ]]; then
-        auth_token="$HF_TOKEN"
-    elif 
-        [[ -n $CIVITAI_TOKEN && $1 =~ ^https://([a-zA-Z0-9_-]+\.)?civitai\.com(/|$|\?) ]]; then
-        auth_token="$CIVITAI_TOKEN"
-    fi
-    if [[ -n $auth_token ]];then
-        wget --header="Authorization: Bearer $auth_token" -qnc --content-disposition --show-progress -e dotbytes="${3:-4M}" -P "$2" "$1"
-    else
-        wget -qnc --content-disposition --show-progress -e dotbytes="${3:-4M}" -P "$2" "$1"
-    fi
-}
-
-# Allow user to disable provisioning if they started with a script they didn't want
 if [[ ! -f /.noprovisioning ]]; then
     provisioning_start
 fi
