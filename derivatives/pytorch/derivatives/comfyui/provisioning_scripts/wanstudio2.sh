@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
 # WanStudio provisioning script — RTX 5090 / Vast.ai
 #
-# What changed vs the previous version (and WHY):
-# - TORCH: installs cu128 stable, NOT cu130. The Vast host driver reports CUDA
-#   12.8 (version 12080). cu130 wheels INSTALL fine but cannot RUN on a 12.8
-#   driver, so torch.cuda.is_available() was False and ComfyUI crash-looped on
-#   import. The 5090 (Blackwell / sm_120) is fully supported by cu128 stable.
-# - Torch verification now checks RUNTIME availability, not just install exit
-#   code, and the driver's max CUDA version is detected to pick cu128 vs cu130.
-# - ORDER: ComfyUI requirements are installed BEFORE torch, and torch is
-#   force-installed LAST, so requirements.txt can't clobber the correct build.
-# - OOM: exports PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True and launches
-#   ComfyUI with --reserve-vram / --disable-smart-memory to survive the Wan 2.2
-#   two-expert (high-noise + low-noise) swap, which was failing on fragmentation.
-# - Problem nodes (TeaCache, SAM3, Yolo-Cropper) are now ACTUALLY removed.
-# - HF_TOKEN is required for gated models (FLUX.2 klein); script warns loudly if
-#   it's missing and verifies downloads instead of silently continuing.
+# MERGED VERSION. Combines:
+#   - Boot fixes: cu128 torch (auto-detect vs cu130), runtime CUDA check,
+#     detached-HEAD-safe ComfyUI update, expandable_segments, download
+#     verification, OOM notes.
+#   - Restored features from the original script: GDrive -> vlora3.py sync
+#     (this is what downloads the LoRA folder contents), SSH setup, JupyterLab
+#     dark theme, HF/Civitai token validation.
 #
-# IMPORTANT: this model set is large. Use a big Vast disk: --disk 180 (min 150).
+# Problem nodes (TeaCache, SAM3, Yolo-Cropper) are intentionally NOT installed
+# and are actively removed if present.
+#
+# LoRAs and several model folders are pulled from Google Drive by vlora3.py.
+# That requires the GDrive folder(s) to be shared with the service-account
+# email in your gdrive_auth.json, or it silently downloads nothing.
+#
+# IMPORTANT: large model set. Use a big Vast disk: --disk 180 (min 150).
 
 set -Eeuo pipefail
 
@@ -39,6 +38,7 @@ APT_PACKAGES=(
     "wget"
     "curl"
     "ca-certificates"
+    "openssh-server"
 )
 
 PIP_PACKAGES=(
@@ -46,6 +46,10 @@ PIP_PACKAGES=(
     "sqlalchemy"
     "alembic"
     "nvidia-ml-py"
+    "gdown"
+    "google-api-python-client"
+    "google-auth"
+    "websocket-client"
 )
 
 NODES=(
@@ -74,17 +78,23 @@ NODES=(
     "https://github.com/ai-joe-git/ComfyUI-Simple-Prompt-Batcher.git"
 )
 
-# Custom-node directory names to remove on every run (matched against the
-# folder name under custom_nodes/). These caused the problems noted in your logs.
+# Custom-node directory names to remove on every run (case-insensitive match
+# against folders under custom_nodes/). These caused problems in your logs.
 PROBLEM_NODES=(
     "ComfyUI-TeaCache"
     "teacache"
     "ComfyUI-SAM3"
     "sam3"
-    "ComfyUI-YoloCropper"
+    "ComfyUI-Yolo-Cropper"
     "Yolo-Cropper"
     "yolo-cropper"
 )
+
+# vlora3.py (GDrive + extra HF downloads) lives in the repo.
+VLORA_SCRIPT_URL="https://raw.githubusercontent.com/uvai/base-image/refs/heads/main/derivatives/pytorch/derivatives/comfyui/provisioning_scripts/vlora3.py"
+
+# SSH public key — prefer WANSTUDIO_SSH_KEY env var; fall back to this.
+SSH_PUBLIC_KEY=""
 
 CHECKPOINT_MODELS=()
 UNET_MODELS=()
@@ -92,6 +102,8 @@ LORA_MODELS=()
 CONTROLNET_MODELS=()
 ESRGAN_MODELS=()
 
+# NOTE: FLUX.2 klein lives here in diffusion_models (matches your validated
+# run). It has been REMOVED from vlora3.py HF_MODELS to kill the double-download.
 DIFFUSION_MODELS=(
     "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"
     "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"
@@ -132,8 +144,7 @@ function provisioning_start() {
     provisioning_get_apt_packages
     provisioning_update_comfyui
 
-    # Install ComfyUI core requirements FIRST so they can't pull in / pin a
-    # torch build that overrides the correct one we install next.
+    # ComfyUI core requirements FIRST so they can't override our torch build.
     echo "Installing ComfyUI core requirements..."
     python -m pip install --no-cache-dir -r "${COMFYUI_DIR}/requirements.txt" || {
         echo "WARNING: ComfyUI requirements install had issues; continuing."
@@ -145,6 +156,8 @@ function provisioning_start() {
     provisioning_get_pip_packages
     provisioning_get_nodes
     provisioning_remove_problem_nodes
+    provisioning_setup_ssh
+    provisioning_setup_jupyter_theme
     provisioning_print_system_info
     provisioning_check_disk_space
     provisioning_check_hf_token
@@ -160,6 +173,10 @@ function provisioning_start() {
     provisioning_get_files "${COMFYUI_DIR}/models/clip_vision" "${CLIP_VISION_MODELS[@]}"
     provisioning_get_files "${COMFYUI_DIR}/models/esrgan" "${ESRGAN_MODELS[@]}"
 
+    # GDrive sync (LoRA folder + extra folders) via vlora3.py.
+    provisioning_setup_gdrive
+    provisioning_sync_gdrive
+
     provisioning_verify_downloads
     provisioning_print_oom_hint
     provisioning_print_end
@@ -170,18 +187,13 @@ function provisioning_update_comfyui() {
 
     if git -C "${COMFYUI_DIR}" rev-parse 2>/dev/null; then
         echo "Found ComfyUI git repo."
-
         (
             cd "${COMFYUI_DIR}"
+            echo "Current ComfyUI revision:"; git rev-parse --short HEAD || true
+            echo "Fetching latest ComfyUI refs..."; git fetch origin || true
 
-            echo "Current ComfyUI revision:"
-            git rev-parse --short HEAD || true
-
-            echo "Fetching latest ComfyUI refs..."
-            git fetch origin || true
-
-            # Vast images often ship ComfyUI in detached HEAD.
-            # Do NOT use plain git pull in detached HEAD; it exits 1 and stops provisioning.
+            # Vast images often ship ComfyUI in detached HEAD; plain git pull
+            # exits 1 there and would stop provisioning.
             if git show-ref --verify --quiet refs/remotes/origin/master; then
                 echo "Checking out origin/master..."
                 git checkout -B master origin/master || true
@@ -189,37 +201,29 @@ function provisioning_update_comfyui() {
                 echo "Checking out origin/main..."
                 git checkout -B main origin/main || true
             else
-                echo "WARNING: Could not find origin/master or origin/main. Leaving ComfyUI at current revision."
+                echo "WARNING: no origin/master or origin/main. Leaving at current revision."
             fi
-
-            echo "ComfyUI revision after update attempt:"
-            git rev-parse --short HEAD || true
-        ) || echo "WARNING: ComfyUI update failed; continuing so model downloads still run."
+            echo "ComfyUI revision after update:"; git rev-parse --short HEAD || true
+        ) || echo "WARNING: ComfyUI update failed; continuing so downloads still run."
     else
         echo "ComfyUI not found or not a git repo. Cloning fresh copy..."
         rm -rf "${COMFYUI_DIR}"
         git clone https://github.com/comfyanonymous/ComfyUI.git "${COMFYUI_DIR}" || {
-            echo "ERROR: Could not clone ComfyUI."
-            exit 1
+            echo "ERROR: Could not clone ComfyUI."; exit 1
         }
     fi
 }
 
-# Returns the host driver's MAX supported CUDA version as an integer like 12080
-# (= 12.8) or 13000 (= 13.0). Uses torch's view of the driver, which is exactly
-# what determines wheel compatibility.
+# Driver's MAX supported CUDA version as int (12080 = 12.8, 13000 = 13.0).
 function provisioning_driver_cuda_int() {
     python - <<'PY' 2>/dev/null || echo 0
 import ctypes
 v = 0
 for lib in ("libcuda.so.1", "libcuda.so"):
     try:
-        cuda = ctypes.CDLL(lib)
-        cuda.cuInit(0)
-        ver = ctypes.c_int(0)
-        cuda.cuDriverGetVersion(ctypes.byref(ver))
-        v = ver.value  # e.g. 12080 for 12.8, 13000 for 13.0
-        break
+        cuda = ctypes.CDLL(lib); cuda.cuInit(0)
+        ver = ctypes.c_int(0); cuda.cuDriverGetVersion(ctypes.byref(ver))
+        v = ver.value; break
     except Exception:
         continue
 print(v)
@@ -231,32 +235,29 @@ function provisioning_install_torch_5090() {
     echo "Installing RTX 5090 (Blackwell / sm_120) PyTorch stack..."
     python -m pip install --no-cache-dir --upgrade pip setuptools wheel || true
 
-    local driver_cuda
-    driver_cuda="$(provisioning_driver_cuda_int)"
+    local driver_cuda; driver_cuda="$(provisioning_driver_cuda_int)"
     echo "Detected driver max CUDA version (int): ${driver_cuda}"
 
-    # Pick the wheel channel the DRIVER can actually run.
-    # cu130 wheels need a >= 13.0 driver (>=13000). Otherwise use cu128 stable,
-    # which fully supports the 5090. This is the bug from last time: cu130
-    # installs on a 12.8 driver but cannot run.
+    # cu130 wheels need a >= 13.0 driver. Otherwise cu128 stable (fully supports
+    # the 5090). This was the original bug: cu130 installs on a 12.8 driver but
+    # cannot run -> torch.cuda.is_available()==False -> ComfyUI crash-loop.
     local index_url
     if [[ "$driver_cuda" -ge 13000 ]]; then
         index_url="https://download.pytorch.org/whl/cu130"
         echo "Driver supports CUDA 13.x -> using cu130 wheels."
     else
         index_url="https://download.pytorch.org/whl/cu128"
-        echo "Driver is < CUDA 13.0 -> using cu128 stable wheels (correct for a 12.8 host)."
+        echo "Driver < CUDA 13.0 -> using cu128 stable wheels (correct for a 12.8 host)."
     fi
 
     set +e
     python -m pip install --no-cache-dir --force-reinstall \
-        torch torchvision torchaudio \
-        --index-url "$index_url"
+        torch torchvision torchaudio --index-url "$index_url"
     local status=$?
     set -e
 
     if [[ $status -ne 0 ]]; then
-        echo "WARNING: torch install from ${index_url} failed. Trying cu128 stable as fallback."
+        echo "WARNING: torch install from ${index_url} failed. Falling back to cu128 stable."
         python -m pip install --no-cache-dir --force-reinstall \
             torch torchvision torchaudio \
             --index-url https://download.pytorch.org/whl/cu128 || \
@@ -265,8 +266,7 @@ function provisioning_install_torch_5090() {
 
     provisioning_print_torch_info
 
-    # Verify RUNTIME CUDA availability, not just install success. If the GPU is
-    # not visible, fail loudly NOW instead of crash-looping ComfyUI forever.
+    # Verify RUNTIME CUDA, not just install success.
     set +e
     python - <<'PY'
 import sys
@@ -277,7 +277,7 @@ except Exception as e:
 print("Torch:", torch.__version__, "| CUDA runtime:", torch.version.cuda)
 if not torch.cuda.is_available():
     print("FATAL: torch.cuda.is_available() is False after install.", file=sys.stderr)
-    print("       This is almost always a wheel/driver CUDA mismatch.", file=sys.stderr)
+    print("       Almost always a wheel/driver CUDA mismatch.", file=sys.stderr)
     print("       Check 'nvidia-smi' top-right for the driver's max CUDA version.", file=sys.stderr)
     sys.exit(1)
 print("CUDA OK:", torch.cuda.get_device_name(0), torch.cuda.get_device_capability(0))
@@ -289,8 +289,6 @@ PY
         echo "############################################################"
         echo "# CUDA is NOT available to torch. ComfyUI would crash-loop. #"
         echo "# Stopping provisioning so you can see this clearly.        #"
-        echo "# Fix: ensure the torch wheel channel matches the host      #"
-        echo "# driver (cu128 for a CUDA 12.8 driver).                    #"
         echo "############################################################"
         exit 1
     fi
@@ -309,30 +307,22 @@ PY
 }
 
 function provisioning_get_apt_packages() {
-    if [[ ${#APT_PACKAGES[@]} -eq 0 ]]; then
-        return 0
-    fi
-
+    if [[ ${#APT_PACKAGES[@]} -eq 0 ]]; then return 0; fi
     echo "Installing apt packages..."
     sudo apt-get update || true
     sudo apt-get install -y "${APT_PACKAGES[@]}" || echo "WARNING: Some apt packages failed."
 }
 
 function provisioning_get_pip_packages() {
-    if [[ ${#PIP_PACKAGES[@]} -eq 0 ]]; then
-        return 0
-    fi
-
+    if [[ ${#PIP_PACKAGES[@]} -eq 0 ]]; then return 0; fi
     echo "Installing extra pip packages..."
     python -m pip install --no-cache-dir "${PIP_PACKAGES[@]}" || echo "WARNING: Some pip packages failed."
 }
 
 function provisioning_get_nodes() {
     mkdir -p "${COMFYUI_DIR}/custom_nodes"
-
     for repo in "${NODES[@]}"; do
-        dir="${repo##*/}"
-        dir="${dir%.git}"
+        dir="${repo##*/}"; dir="${dir%.git}"
         path="${COMFYUI_DIR}/custom_nodes/${dir}"
         requirements="${path}/requirements.txt"
 
@@ -340,8 +330,7 @@ function provisioning_get_nodes() {
             if [[ "${AUTO_UPDATE,,}" != "false" ]]; then
                 printf "Updating node: %s...\n" "$repo"
                 (
-                    cd "$path"
-                    git fetch origin || true
+                    cd "$path"; git fetch origin || true
                     current_branch="$(git branch --show-current || true)"
                     if [[ -n "$current_branch" ]]; then
                         git pull --ff-only || true
@@ -352,10 +341,7 @@ function provisioning_get_nodes() {
             fi
         else
             printf "Downloading node: %s...\n" "$repo"
-            git clone "$repo" "$path" --recursive || {
-                echo "WARNING: Failed to clone $repo"
-                continue
-            }
+            git clone "$repo" "$path" --recursive || { echo "WARNING: Failed to clone $repo"; continue; }
         fi
 
         if [[ -f "$requirements" ]]; then
@@ -364,47 +350,135 @@ function provisioning_get_nodes() {
     done
 }
 
-# Actually remove the nodes the old header only CLAIMED to remove.
 function provisioning_remove_problem_nodes() {
     local cn_dir="${COMFYUI_DIR}/custom_nodes"
     [[ -d "$cn_dir" ]] || return 0
-
     echo "Removing known-problem custom nodes (TeaCache / SAM3 / Yolo-Cropper)..."
     for name in "${PROBLEM_NODES[@]}"; do
-        # Case-insensitive match against existing node folders.
         while IFS= read -r -d '' found; do
-            echo "  Removing: $found"
-            rm -rf "$found"
+            echo "  Removing: $found"; rm -rf "$found"
         done < <(find "$cn_dir" -maxdepth 1 -iname "*${name}*" -print0 2>/dev/null || true)
     done
+}
+
+# ── SSH ─────────────────────────────────────────────
+function provisioning_setup_ssh() {
+    echo "Setting up SSH..."
+    service ssh start || true
+    mkdir -p /root/.ssh; chmod 700 /root/.ssh
+    local key="${WANSTUDIO_SSH_KEY:-$SSH_PUBLIC_KEY}"
+    if [[ -n "$key" ]]; then
+        echo "$key" >> /root/.ssh/authorized_keys
+        chmod 600 /root/.ssh/authorized_keys
+        echo "SSH public key installed."
+    else
+        echo "WARNING: No SSH public key. Set WANSTUDIO_SSH_KEY env var or SSH_PUBLIC_KEY in this script."
+    fi
+    sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config || true
+    sed -i 's/PermitRootLogin no/PermitRootLogin yes/' /etc/ssh/sshd_config || true
+    service ssh restart || true
+    echo "SSH setup complete."
+}
+
+# ── JupyterLab dark theme ───────────────────────────
+function provisioning_setup_jupyter_theme() {
+    echo "Setting JupyterLab dark theme..."
+    mkdir -p /root/.jupyter/lab/user-settings/@jupyterlab/apputils-extension
+    cat > /root/.jupyter/lab/user-settings/@jupyterlab/apputils-extension/themes.jupyterlab-settings << 'EOF'
+{
+    "theme": "JupyterLab Dark"
+}
+EOF
+    echo "JupyterLab dark theme set."
+}
+
+# ── Google Drive credentials ────────────────────────
+# Decodes GDRIVE_CREDENTIALS_B64 into gdrive_auth.json; falls back to a known
+# credentials file on Drive via gdown if the env var is missing/invalid.
+function provisioning_setup_gdrive() {
+    CREDENTIALS_GDRIVE_ID="1akurAPebSquq5vmedB_ZRygoX-KKffRC"
+    python -m pip install -q gdown || true
+
+    if [[ -n "${GDRIVE_CREDENTIALS_B64:-}" ]]; then
+        echo "Decoding Google Drive credentials from env var..."
+        echo "$GDRIVE_CREDENTIALS_B64" | base64 -d > /workspace/gdrive_auth.json
+        chmod 600 /workspace/gdrive_auth.json
+    fi
+
+    if ! python3 -c "import json; json.load(open('/workspace/gdrive_auth.json'))" 2>/dev/null; then
+        echo "gdrive_auth.json missing or invalid — downloading from Google Drive..."
+        gdown --id "$CREDENTIALS_GDRIVE_ID" -O /workspace/gdrive_auth.json || true
+        chmod 600 /workspace/gdrive_auth.json 2>/dev/null || true
+    fi
+
+    if python3 -c "import json; json.load(open('/workspace/gdrive_auth.json'))" 2>/dev/null; then
+        echo "gdrive_auth.json is valid."
+    else
+        echo "WARNING: gdrive_auth.json still invalid. GDrive sync (incl. LoRAs) will be skipped."
+        return 1
+    fi
+}
+
+function provisioning_get_vlora_script() {
+    echo "Downloading vlora3.py..."
+    wget -q -O /workspace/vlora3.py "$VLORA_SCRIPT_URL" && {
+        chmod +x /workspace/vlora3.py
+        echo "vlora3.py downloaded."
+        return 0
+    }
+    echo "WARNING: Failed to download vlora3.py."
+    return 1
+}
+
+# Runs vlora3.py, which lists each configured Drive folder and downloads its
+# contents (LoRAs + extra folders) plus its HF model list.
+function provisioning_sync_gdrive() {
+    if [[ ! -f /workspace/gdrive_auth.json ]]; then
+        echo "Skipping GDrive sync — no gdrive_auth.json."
+        return 1
+    fi
+    provisioning_get_vlora_script || return 1
+    echo "Running vlora3.py..."
+    python3 /workspace/vlora3.py || echo "WARNING: vlora3.py exited non-zero."
+    echo "vlora3.py complete."
 }
 
 function provisioning_check_hf_token() {
     echo
     echo "===== HF TOKEN CHECK ====="
     if [[ -z "${HF_TOKEN:-}" ]]; then
-        echo "WARNING: HF_TOKEN is not set."
-        echo "Gated repos (e.g. black-forest-labs/FLUX.2-klein-*) will return 401"
-        echo "and be SKIPPED. Set HF_TOKEN in the Vast environment to fetch them."
+        echo "WARNING: HF_TOKEN not set. Gated repos (e.g. FLUX.2-klein-*) will 401 and be SKIPPED."
+    elif provisioning_has_valid_hf_token; then
+        echo "HF_TOKEN is set and VALID."
     else
-        echo "HF_TOKEN is set; gated downloads will be authenticated."
+        echo "WARNING: HF_TOKEN is set but did NOT validate (whoami != 200). Gated downloads may fail."
     fi
     echo "=========================="
     echo
 }
 
+function provisioning_has_valid_hf_token() {
+    [[ -n "${HF_TOKEN:-}" ]] || return 1
+    local response
+    response=$(curl -o /dev/null -s -w "%{http_code}" -X GET "https://huggingface.co/api/whoami-v2" \
+        -H "Authorization: Bearer $HF_TOKEN" -H "Content-Type: application/json")
+    [[ "$response" -eq 200 ]]
+}
+
+function provisioning_has_valid_civitai_token() {
+    [[ -n "${CIVITAI_TOKEN:-}" ]] || return 1
+    local response
+    response=$(curl -o /dev/null -s -w "%{http_code}" -X GET "https://civitai.com/api/v1/models?hidden=1&limit=1" \
+        -H "Authorization: Bearer $CIVITAI_TOKEN" -H "Content-Type: application/json")
+    [[ "$response" -eq 200 ]]
+}
+
 function provisioning_get_files() {
-    local dir="$1"
-    shift || true
+    local dir="$1"; shift || true
     local arr=("$@")
-
-    if [[ ${#arr[@]} -eq 0 ]]; then
-        return 0
-    fi
-
+    if [[ ${#arr[@]} -eq 0 ]]; then return 0; fi
     mkdir -p "$dir"
     printf "Downloading %s model(s) to %s...\n" "${#arr[@]}" "$dir"
-
     for url in "${arr[@]}"; do
         printf "Downloading: %s\n" "$url"
         provisioning_download "$url" "$dir"
@@ -413,28 +487,22 @@ function provisioning_get_files() {
 }
 
 function provisioning_download() {
-    local url="$1"
-    local dir="$2"
-    local auth_token=""
-
+    local url="$1"; local dir="$2"; local auth_token=""
     if [[ -n "${HF_TOKEN:-}" && "$url" =~ ^https://([a-zA-Z0-9_-]+\.)?huggingface\.co(/|$|\?) ]]; then
         auth_token="$HF_TOKEN"
     elif [[ -n "${CIVITAI_TOKEN:-}" && "$url" =~ ^https://([a-zA-Z0-9_-]+\.)?civitai\.com(/|$|\?) ]]; then
         auth_token="$CIVITAI_TOKEN"
     fi
-
     if [[ -n "$auth_token" ]]; then
         wget --header="Authorization: Bearer $auth_token" \
-            -qnc --content-disposition --show-progress \
-            -e dotbytes="4M" -P "$dir" "$url" || echo "WARNING: Download failed: $url"
+            -qnc --content-disposition --show-progress -e dotbytes="4M" -P "$dir" "$url" \
+            || echo "WARNING: Download failed: $url"
     else
-        wget -qnc --content-disposition --show-progress \
-            -e dotbytes="4M" -P "$dir" "$url" || echo "WARNING: Download failed: $url"
+        wget -qnc --content-disposition --show-progress -e dotbytes="4M" -P "$dir" "$url" \
+            || echo "WARNING: Download failed: $url"
     fi
 }
 
-# Sanity-check what actually landed on disk, so a 3-minute "success" that
-# downloaded almost nothing is obvious instead of silent.
 function provisioning_verify_downloads() {
     echo
     echo "===== DOWNLOADED MODEL FILES ====="
@@ -443,8 +511,7 @@ function provisioning_verify_downloads() {
         find "$mdir" -type f \( -name "*.safetensors" -o -name "*.sft" -o -name "*.pth" -o -name "*.gguf" \) \
             -printf "%10s  %p\n" 2>/dev/null | sort -k2 || true
         echo "----------------------------------"
-        echo "Total models dir size:"
-        du -sh "$mdir" 2>/dev/null || true
+        echo "Total models dir size:"; du -sh "$mdir" 2>/dev/null || true
     else
         echo "WARNING: ${mdir} does not exist — no models downloaded."
     fi
@@ -456,8 +523,7 @@ function provisioning_check_disk_space() {
     echo
     echo "===== DISK SPACE ====="
     df -h "${WORKSPACE}" || true
-    echo "Tip: this full model set is large (qwen_image_edit bf16 ~40GB, both"
-    echo "FLUX.2 klein variants, both Wan 2.2 experts, t5xxl_fp16). Use --disk 180."
+    echo "Tip: large model set. Use --disk 180."
     echo "======================"
     echo
 }
@@ -477,14 +543,12 @@ function provisioning_print_system_info() {
 function provisioning_print_oom_hint() {
     echo
     echo "===== WAN 2.2 OOM NOTES ====="
-    echo "Your earlier OOM was the two-expert (high-noise + low-noise) swap"
-    echo "failing on allocator FRAGMENTATION (31GB reserved, ~7GB allocated),"
-    echo "not raw VRAM exhaustion. This run sets:"
+    echo "The earlier OOM was the two-expert (high+low noise) swap failing on"
+    echo "allocator FRAGMENTATION, not raw VRAM. This run sets:"
     echo "  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
     echo "If you still OOM, launch ComfyUI with:"
     echo "  --reserve-vram 1.0 --disable-smart-memory"
-    echo "or switch the Wan models to GGUF (Q8 / Q5_K_M) via ComfyUI-GGUF to"
-    echo "avoid the fp8 load-time re-quantization spike entirely."
+    echo "or switch Wan to GGUF (Q8 / Q5_K_M) via ComfyUI-GGUF."
     echo "============================="
     echo
 }
@@ -494,18 +558,15 @@ function provisioning_print_header() {
     printf "#                                            #\n"
     printf "#       WanStudio RTX 5090 Provisioning      #\n"
     printf "#                                            #\n"
-    printf "#   cu128 torch fix + OOM + download checks   #\n"
+    printf "#  cu128 fix + GDrive/LoRA + SSH + OOM hints  #\n"
     printf "#                                            #\n"
     printf "##############################################\n\n"
 }
 
 function provisioning_print_end() {
-    local end_time
-    end_time=$(date +%s)
+    local end_time; end_time=$(date +%s)
     local elapsed=$((end_time - PROVISIONING_START_TIME))
-    local mins=$((elapsed / 60))
-    local secs=$((elapsed % 60))
-
+    local mins=$((elapsed / 60)); local secs=$((elapsed % 60))
     echo
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "✅ Provisioning complete — took ${mins}m ${secs}s"
