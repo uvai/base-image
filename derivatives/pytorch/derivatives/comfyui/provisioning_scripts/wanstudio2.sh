@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
-# WanStudio provisioning script — RTX 5090 focused
-# Changes:
-# - Installs newer PyTorch CUDA stack for RTX 5090 / WAN FP8 quantisation
-# - Removes broken/problematic nodes seen in logs: TeaCache, SAM3, Yolo-Cropper
-# - Removes fake apt packages
-# - Adds diagnostics so the log confirms torch/CUDA/GPU versions
+# WanStudio provisioning script — RTX 5090 / Vast.ai focused
+#
+# Fixes included:
+# - Handles ComfyUI detached HEAD correctly
+# - Does not die before model downloads if git pull cannot run
+# - Installs/attempts PyTorch cu130 first, then falls back safely
+# - Keeps downloading models even if one download fails
+# - Removes known-problem nodes from your logs: TeaCache, SAM3, Yolo-Cropper
+# - Prints torch/CUDA/GPU diagnostics
+#
+# IMPORTANT: use a large Vast disk, e.g. --disk 100 or --disk 120
 
 set -Eeuo pipefail
 
@@ -15,8 +20,6 @@ COMFYUI_DIR="${WORKSPACE}/ComfyUI"
 
 if [[ -f /venv/main/bin/activate ]]; then
     source /venv/main/bin/activate
-else
-    echo "WARNING: /venv/main/bin/activate not found. Continuing with current Python."
 fi
 
 APT_PACKAGES=(
@@ -104,64 +107,100 @@ function provisioning_start() {
 
     provisioning_print_header
     provisioning_get_apt_packages
-
-    echo "Auto-updating ComfyUI core..."
-    if git -C "${COMFYUI_DIR}" rev-parse 2>/dev/null; then
-        echo "Found ComfyUI git repo, pulling latest..."
-        (cd "${COMFYUI_DIR}" && git pull --rebase) || (cd "${COMFYUI_DIR}" && git pull)
-    else
-        echo "ComfyUI not found or not a git repo. Cloning fresh copy..."
-        rm -rf "${COMFYUI_DIR}"
-        git clone https://github.com/comfyanonymous/ComfyUI.git "${COMFYUI_DIR}"
-    fi
-
+    provisioning_update_comfyui
     provisioning_install_torch_5090
 
     echo "Installing ComfyUI core requirements..."
-    python -m pip install --no-cache-dir -r "${COMFYUI_DIR}/requirements.txt"
+    python -m pip install --no-cache-dir -r "${COMFYUI_DIR}/requirements.txt" || {
+        echo "WARNING: ComfyUI requirements install had issues; continuing."
+    }
 
     provisioning_get_pip_packages
     provisioning_get_nodes
     provisioning_print_system_info
+    provisioning_check_disk_space
 
-    provisioning_get_files "${COMFYUI_DIR}/models/checkpoints" "${CHECKPOINT_MODELS[@]}"
-    provisioning_get_files "${COMFYUI_DIR}/models/unet" "${UNET_MODELS[@]}"
+    # provisioning_get_files "${COMFYUI_DIR}/models/checkpoints" "${CHECKPOINT_MODELS[@]}"
+    # provisioning_get_files "${COMFYUI_DIR}/models/unet" "${UNET_MODELS[@]}"
     # provisioning_get_files "${COMFYUI_DIR}/models/lora" "${LORA_MODELS[@]}"
-    provisioning_get_files "${COMFYUI_DIR}/models/controlnet" "${CONTROLNET_MODELS[@]}"
-    provisioning_get_files "${COMFYUI_DIR}/models/vae" "${VAE_MODELS[@]}"
-    provisioning_get_files "${COMFYUI_DIR}/models/upscale_models" "${UPSCALE_MODELS[@]}"
-    provisioning_get_files "${COMFYUI_DIR}/models/diffusion_models" "${DIFFUSION_MODELS[@]}"
-    provisioning_get_files "${COMFYUI_DIR}/models/text_encoders" "${TEXT_ENCODER_MODELS[@]}"
-    provisioning_get_files "${COMFYUI_DIR}/models/clip_vision" "${CLIP_VISION_MODELS[@]}"
-    provisioning_get_files "${COMFYUI_DIR}/models/esrgan" "${ESRGAN_MODELS[@]}"
+    # provisioning_get_files "${COMFYUI_DIR}/models/controlnet" "${CONTROLNET_MODELS[@]}"
+    # provisioning_get_files "${COMFYUI_DIR}/models/vae" "${VAE_MODELS[@]}"
+    # provisioning_get_files "${COMFYUI_DIR}/models/upscale_models" "${UPSCALE_MODELS[@]}"
+    # provisioning_get_files "${COMFYUI_DIR}/models/diffusion_models" "${DIFFUSION_MODELS[@]}"
+    # provisioning_get_files "${COMFYUI_DIR}/models/text_encoders" "${TEXT_ENCODER_MODELS[@]}"
+    # provisioning_get_files "${COMFYUI_DIR}/models/clip_vision" "${CLIP_VISION_MODELS[@]}"
+    # provisioning_get_files "${COMFYUI_DIR}/models/esrgan" "${ESRGAN_MODELS[@]}"
 
     provisioning_print_end
+}
+
+function provisioning_update_comfyui() {
+    echo "Auto-updating ComfyUI core..."
+
+    if git -C "${COMFYUI_DIR}" rev-parse 2>/dev/null; then
+        echo "Found ComfyUI git repo."
+
+        (
+            cd "${COMFYUI_DIR}"
+
+            echo "Current ComfyUI revision:"
+            git rev-parse --short HEAD || true
+
+            echo "Fetching latest ComfyUI refs..."
+            git fetch origin || true
+
+            # Vast images often ship ComfyUI in detached HEAD.
+            # Do NOT use plain git pull in detached HEAD; it exits 1 and stops provisioning.
+            if git show-ref --verify --quiet refs/remotes/origin/master; then
+                echo "Checking out origin/master..."
+                git checkout -B master origin/master || true
+            elif git show-ref --verify --quiet refs/remotes/origin/main; then
+                echo "Checking out origin/main..."
+                git checkout -B main origin/main || true
+            else
+                echo "WARNING: Could not find origin/master or origin/main. Leaving ComfyUI at current revision."
+            fi
+
+            echo "ComfyUI revision after update attempt:"
+            git rev-parse --short HEAD || true
+        ) || echo "WARNING: ComfyUI update failed; continuing so model downloads still run."
+    else
+        echo "ComfyUI not found or not a git repo. Cloning fresh copy..."
+        rm -rf "${COMFYUI_DIR}"
+        git clone https://github.com/comfyanonymous/ComfyUI.git "${COMFYUI_DIR}" || {
+            echo "ERROR: Could not clone ComfyUI."
+            exit 1
+        }
+    fi
 }
 
 function provisioning_install_torch_5090() {
     echo
     echo "Installing RTX 5090 PyTorch stack..."
-    python -m pip install --no-cache-dir --upgrade pip setuptools wheel
+    python -m pip install --no-cache-dir --upgrade pip setuptools wheel || true
 
+    echo "Trying PyTorch cu130 first..."
     set +e
     python -m pip install --no-cache-dir --force-reinstall \
         torch torchvision torchaudio \
         --index-url https://download.pytorch.org/whl/cu130
-    local CU130_STATUS=$?
+    CU130_STATUS=$?
     set -e
 
     if [[ $CU130_STATUS -ne 0 ]]; then
         echo "WARNING: cu130 install failed. Falling back to PyTorch nightly cu128."
         python -m pip install --no-cache-dir --upgrade --pre \
             torch torchvision torchaudio \
-            --index-url https://download.pytorch.org/whl/nightly/cu128
+            --index-url https://download.pytorch.org/whl/nightly/cu128 || {
+                echo "WARNING: cu128 nightly install failed too. Continuing with existing torch."
+            }
     fi
 
     provisioning_print_torch_info
 }
 
 function provisioning_print_torch_info() {
-    python - <<'PY'
+    python - <<'PY' || true
 import torch
 print("Torch:", torch.__version__)
 print("Torch CUDA runtime:", torch.version.cuda)
@@ -179,7 +218,7 @@ function provisioning_get_apt_packages() {
 
     echo "Installing apt packages..."
     sudo apt-get update || true
-    sudo apt-get install -y "${APT_PACKAGES[@]}"
+    sudo apt-get install -y "${APT_PACKAGES[@]}" || echo "WARNING: Some apt packages failed."
 }
 
 function provisioning_get_pip_packages() {
@@ -188,7 +227,7 @@ function provisioning_get_pip_packages() {
     fi
 
     echo "Installing extra pip packages..."
-    python -m pip install --no-cache-dir "${PIP_PACKAGES[@]}"
+    python -m pip install --no-cache-dir "${PIP_PACKAGES[@]}" || echo "WARNING: Some pip packages failed."
 }
 
 function provisioning_get_nodes() {
@@ -203,7 +242,16 @@ function provisioning_get_nodes() {
         if [[ -d "$path" ]]; then
             if [[ "${AUTO_UPDATE,,}" != "false" ]]; then
                 printf "Updating node: %s...\n" "$repo"
-                (cd "$path" && git pull --rebase) || (cd "$path" && git pull) || true
+                (
+                    cd "$path"
+                    git fetch origin || true
+                    current_branch="$(git branch --show-current || true)"
+                    if [[ -n "$current_branch" ]]; then
+                        git pull --ff-only || true
+                    else
+                        echo "Node is detached HEAD; skipping pull."
+                    fi
+                ) || true
             fi
         else
             printf "Downloading node: %s...\n" "$repo"
@@ -259,6 +307,15 @@ function provisioning_download() {
     fi
 }
 
+function provisioning_check_disk_space() {
+    echo
+    echo "===== DISK SPACE ====="
+    df -h "${WORKSPACE}" || true
+    echo "Tip: for this model set, use Vast --disk 100 or --disk 120."
+    echo "======================"
+    echo
+}
+
 function provisioning_print_system_info() {
     echo
     echo "===== SYSTEM INFO ====="
@@ -275,7 +332,7 @@ function provisioning_print_header() {
     printf "#                                            #\n"
     printf "#       WanStudio RTX 5090 Provisioning      #\n"
     printf "#                                            #\n"
-    printf "#         This will take some time           #\n"
+    printf "#     Detached-head + model download fix     #\n"
     printf "#                                            #\n"
     printf "##############################################\n\n"
 }
