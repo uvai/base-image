@@ -1,0 +1,390 @@
+#!/bin/bash
+
+source /venv/main/bin/activate
+COMFYUI_DIR=${WORKSPACE}/ComfyUI
+
+# Packages are installed after nodes so we can fix them...
+
+APT_PACKAGES=(
+    "openssh-server"
+)
+
+PIP_PACKAGES=(
+    "av"
+    "sqlalchemy"
+    "alembic"
+    "google-api-python-client"
+    "google-auth"
+    "gdown"
+    "websocket-client"
+)
+
+NODES=(
+    "https://github.com/ltdrdata/ComfyUI-Manager"
+    "https://github.com/cubiq/ComfyUI_essentials"
+    "https://github.com/welltop-cn/ComfyUI-TeaCache.git"
+    "https://github.com/kijai/ComfyUI-KJNodes"
+    "https://github.com/Kosinkadink/ComfyUI-VideoHelperSuite"
+    "https://github.com/rgthree/rgthree-comfy.git"
+    "https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch.git"
+    "https://github.com/WASasquatch/was-node-suite-comfyui.git"
+    "https://github.com/ClownsharkBatwing/RES4LYF.git"
+    "https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git"
+    "https://github.com/kijai/ComfyUI-GIMM-VFI.git"
+    "https://github.com/BigStationW/ComfyUi-Scale-Image-to-Total-Pixels-Advanced.git"
+    "https://github.com/moonwhaler/comfyui-seedvr2-tilingupscaler.git"
+    "https://github.com/erosDiffusion/ComfyUI-EulerDiscreteScheduler.git"
+    "https://github.com/1038lab/ComfyUI-RMBG.git"
+    "https://github.com/CY-CHENYUE/ComfyUI-InpaintEasy.git"
+    "https://github.com/chflame163/ComfyUI_LayerStyle.git"
+    "https://github.com/yolain/ComfyUI-Easy-Use.git"
+    "https://github.com/PozzettiAndrea/ComfyUI-SAM3.git"
+    "https://github.com/JPS-GER/ComfyUI_JPS-Nodes.git"
+    "https://github.com/tooldigital/ComfyUI-Yolo-Cropper.git"
+    "https://github.com/thalismind/ComfyUI-LoadImageWithFilename.git"
+    "https://github.com/city96/ComfyUI-GGUF.git"
+    "https://github.com/Fannovel16/comfyui_controlnet_aux.git"
+    "https://github.com/crystian/ComfyUI-Crystools.git"
+    "https://github.com/ai-joe-git/ComfyUI-Simple-Prompt-Batcher.git"
+)
+
+CHECKPOINT_MODELS=(
+)
+
+UNET_MODELS=(
+)
+
+DIFFUSION_MODELS=(
+    "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"
+    "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"
+    "https://huggingface.co/Comfy-Org/Qwen-Image-Edit_ComfyUI/resolve/main/split_files/diffusion_models/qwen_image_edit_2511_bf16.safetensors"
+    "https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/resolve/main/flux-2-klein-9b.safetensors"
+    "https://huggingface.co/black-forest-labs/FLUX.2-klein-base-9b-fp8/resolve/main/flux-2-klein-base-9b-fp8.safetensors"
+)
+
+LORA_MODELS=(
+)
+
+VAE_MODELS=(
+    "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors"
+    "https://huggingface.co/Madespace/vae/resolve/main/ae.sft"
+    "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors"
+    "https://huggingface.co/Comfy-Org/flux2-dev/resolve/main/split_files/vae/flux2-vae.safetensors"
+)
+
+ESRGAN_MODELS=(
+)
+
+UPSCALE_MODELS=(
+    "https://huggingface.co/uwg/upscaler/resolve/main/ESRGAN/4x_NMKD-Siax_200k.pth"
+)
+
+TEXT_ENCODER_MODELS=(
+    "https://huggingface.co/Comfy-Org/HunyuanVideo_repackaged/resolve/main/split_files/text_encoders/clip_l.safetensors"
+    "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+    "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/main/t5xxl_fp16.safetensors"
+    "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors"
+    "https://huggingface.co/Comfy-Org/z_image_turbo/resolve/main/split_files/text_encoders/qwen_3_4b.safetensors"
+    "https://huggingface.co/Comfy-Org/vae-text-encorder-for-flux-klein-9b/resolve/main/split_files/text_encoders/qwen_3_8b_fp8mixed.safetensors"
+    "https://huggingface.co/Comfy-Org/vae-text-encorder-for-flux-klein-9b/resolve/main/split_files/text_encoders/qwen_3_8b.safetensors"
+)
+
+CLIP_VISION_MODELS=(
+    "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors"
+)
+
+CONTROLNET_MODELS=(
+)
+
+# ─────────────────────────────────────────────
+# Google Drive folder IDs and HuggingFace models
+# are managed in vlora3.py — edit that file to
+# add or remove models/folders.
+# ─────────────────────────────────────────────
+
+# SSH public key — paste your public key here
+# Generate with: ssh-keygen -t ed25519 -C "wanstudio"
+SSH_PUBLIC_KEY=""
+
+### DO NOT EDIT BELOW HERE UNLESS YOU KNOW WHAT YOU ARE DOING ###
+
+function provisioning_start() {
+    PROVISIONING_START_TIME=$(date +%s)
+
+    provisioning_print_header
+
+    echo "Auto-updating ComfyUI core..."
+    if git -C /workspace/ComfyUI rev-parse 2>/dev/null; then
+        echo "Found git repo, pulling latest ComfyUI..."
+        (cd /workspace/ComfyUI && git pull)
+    else
+        echo "ComfyUI not a git repo or missing. Cloning fresh copy..."
+        rm -rf /workspace/ComfyUI
+        git clone https://github.com/comfyanonymous/ComfyUI.git /workspace/ComfyUI
+    fi
+
+    echo "Installing ComfyUI core requirements..."
+    python -m pip install --no-cache-dir -r /workspace/ComfyUI/requirements.txt
+
+    provisioning_print_header
+    provisioning_get_apt_packages
+    provisioning_get_pip_packages
+    provisioning_get_nodes
+    provisioning_setup_ssh
+    provisioning_setup_jupyter_theme
+
+    provisioning_get_files \
+        "${COMFYUI_DIR}/models/checkpoints" \
+        "${CHECKPOINT_MODELS[@]}"
+    provisioning_get_files \
+        "${COMFYUI_DIR}/models/unet" \
+        "${UNET_MODELS[@]}"
+    provisioning_get_files \
+        "${COMFYUI_DIR}/models/lora" \
+        "${LORA_MODELS[@]}"
+    provisioning_get_files \
+        "${COMFYUI_DIR}/models/controlnet" \
+        "${CONTROLNET_MODELS[@]}"
+    provisioning_get_files \
+        "${COMFYUI_DIR}/models/vae" \
+        "${VAE_MODELS[@]}"
+    provisioning_get_files \
+        "${COMFYUI_DIR}/models/upscale_models" \
+        "${UPSCALE_MODELS[@]}"
+    provisioning_get_files \
+        "${COMFYUI_DIR}/models/diffusion_models" \
+        "${DIFFUSION_MODELS[@]}"
+    provisioning_get_files \
+        "${COMFYUI_DIR}/models/text_encoders" \
+        "${TEXT_ENCODER_MODELS[@]}"
+    provisioning_get_files \
+        "${COMFYUI_DIR}/models/clip_vision" \
+        "${CLIP_VISION_MODELS[@]}"
+    provisioning_get_files \
+        "${COMFYUI_DIR}/models/esrgan" \
+        "${ESRGAN_MODELS[@]}"
+
+    provisioning_setup_gdrive
+    provisioning_sync_gdrive
+
+    provisioning_print_end
+}
+
+function provisioning_setup_jupyter_theme() {
+    echo "Setting JupyterLab dark theme..."
+    mkdir -p /root/.jupyter/lab/user-settings/@jupyterlab/apputils-extension
+    cat > /root/.jupyter/lab/user-settings/@jupyterlab/apputils-extension/themes.jupyterlab-settings << 'EOF'
+{
+    "theme": "JupyterLab Dark"
+}
+EOF
+    echo "JupyterLab dark theme set."
+}
+
+# ─────────────────────────────────────────────
+# SSH Setup
+# Reads SSH_PUBLIC_KEY from env var or falls back
+# to the hardcoded key in this script
+# ─────────────────────────────────────────────
+function provisioning_setup_ssh() {
+    echo "Setting up SSH..."
+
+    service ssh start || true
+
+    mkdir -p /root/.ssh
+    chmod 700 /root/.ssh
+
+    # Prefer env var, fall back to hardcoded key above
+    local key="${WANSTUDIO_SSH_KEY:-$SSH_PUBLIC_KEY}"
+
+    if [[ -n "$key" ]]; then
+        echo "$key" >> /root/.ssh/authorized_keys
+        chmod 600 /root/.ssh/authorized_keys
+        echo "SSH public key installed."
+    else
+        echo "WARNING: No SSH public key found. Set WANSTUDIO_SSH_KEY env var or edit SSH_PUBLIC_KEY in this script."
+    fi
+
+    # Ensure SSH daemon is configured to allow root login
+    sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+    sed -i 's/PermitRootLogin no/PermitRootLogin yes/' /etc/ssh/sshd_config
+    service ssh restart || true
+
+    echo "SSH setup complete. Connect with: ssh -p 2222 root@<instance-ip>"
+}
+
+# ─────────────────────────────────────────────
+# Google Drive Credentials Setup
+# Decodes base64 credentials from env var
+# GDRIVE_CREDENTIALS_B64 into credentials.json
+#
+# To encode your credentials.json locally run:
+#   base64 -i credentials.json | tr -d '\n'
+# Then set as env var in vast.ai docker options:
+#   -e GDRIVE_CREDENTIALS_B64="<output>"
+# ─────────────────────────────────────────────
+function provisioning_setup_gdrive() {
+    CREDENTIALS_GDRIVE_ID="1akurAPebSquq5vmedB_ZRygoX-KKffRC"
+
+    # Ensure gdown is available
+    pip install -q gdown
+
+    # Try base64 env var first
+    if [[ -n "$GDRIVE_CREDENTIALS_B64" ]]; then
+        echo "Decoding Google Drive credentials from env var..."
+        echo "$GDRIVE_CREDENTIALS_B64" | base64 -d > /workspace/gdrive_auth.json
+        chmod 600 /workspace/gdrive_auth.json
+    fi
+
+    # Validate — if missing or invalid JSON, fall back to gdown
+    if ! python3 -c "import json; json.load(open('/workspace/gdrive_auth.json'))" 2>/dev/null; then
+        echo "gdrive_auth.json missing or invalid — downloading from Google Drive..."
+        gdown --id "$CREDENTIALS_GDRIVE_ID" -O /workspace/gdrive_auth.json
+        chmod 600 /workspace/gdrive_auth.json
+    fi
+
+    # Final check
+    if python3 -c "import json; json.load(open('/workspace/gdrive_auth.json'))" 2>/dev/null; then
+        echo "gdrive_auth.json is valid."
+    else
+        echo "WARNING: gdrive_auth.json still invalid after fallback. GDrive sync will fail."
+        return 1
+    fi
+}
+
+# ─────────────────────────────────────────────
+# Download vlora3.py from GitHub
+# This script handles all GDrive + HuggingFace
+# model downloads. Update it in the repo to
+# add new models without touching this file.
+# ─────────────────────────────────────────────
+function provisioning_get_vlora_script() {
+    echo "Downloading vlora3.py from GitHub..."
+    wget -q -O /workspace/vlora3.py \
+        https://raw.githubusercontent.com/uvai/base-image/refs/heads/main/derivatives/pytorch/derivatives/comfyui/provisioning_scripts/vlora3.py
+    if [[ $? -eq 0 ]]; then
+        chmod +x /workspace/vlora3.py
+        echo "vlora3.py downloaded to /workspace/vlora3.py"
+    else
+        echo "WARNING: Failed to download vlora3.py from GitHub."
+        return 1
+    fi
+}
+
+# ─────────────────────────────────────────────
+# Google Drive + HuggingFace Sync
+# Delegates to vlora3.py for all downloads
+# ─────────────────────────────────────────────
+function provisioning_sync_gdrive() {
+    if [[ ! -f /workspace/gdrive_auth.json ]]; then
+        echo "Skipping GDrive sync — no gdrive_auth.json."
+        return 1
+    fi
+
+    provisioning_get_vlora_script || return 1
+
+    echo "Running vlora3.py..."
+    python3 /workspace/vlora3.py
+    echo "vlora3.py complete."
+}
+
+function provisioning_get_apt_packages() {
+    if [[ -n $APT_PACKAGES ]]; then
+        sudo $APT_INSTALL ${APT_PACKAGES[@]}
+    fi
+}
+
+function provisioning_get_pip_packages() {
+    if [[ -n $PIP_PACKAGES ]]; then
+        pip install --no-cache-dir ${PIP_PACKAGES[@]}
+    fi
+}
+
+function provisioning_get_nodes() {
+    for repo in "${NODES[@]}"; do
+        dir="${repo##*/}"
+        dir="${dir%.git}"
+        path="${COMFYUI_DIR}/custom_nodes/${dir}"
+        requirements="${path}/requirements.txt"
+        if [[ -d $path ]]; then
+            if [[ ${AUTO_UPDATE,,} != "false" ]]; then
+                printf "Updating node: %s...\n" "${repo}"
+                ( cd "$path" && git pull )
+                if [[ -e $requirements ]]; then
+                    pip install --no-cache-dir -r "$requirements"
+                fi
+            fi
+        else
+            printf "Downloading node: %s...\n" "${repo}"
+            git clone "${repo}" "${path}" --recursive
+            if [[ -e $requirements ]]; then
+                pip install --no-cache-dir -r "${requirements}"
+            fi
+        fi
+    done
+}
+
+function provisioning_get_files() {
+    if [[ -z $2 ]]; then return 1; fi
+
+    dir="$1"
+    mkdir -p "$dir"
+    shift
+    arr=("$@")
+    printf "Downloading %s model(s) to %s...\n" "${#arr[@]}" "$dir"
+    for url in "${arr[@]}"; do
+        printf "Downloading: %s\n" "${url}"
+        provisioning_download "${url}" "${dir}"
+        printf "\n"
+    done
+}
+
+function provisioning_print_header() {
+    printf "\n##############################################\n#                                            #\n#             WanStudio Provisioning          #\n#                                            #\n#         This will take some time           #\n#                                            #\n# Your container will be ready on completion #\n#                                            #\n##############################################\n\n"
+}
+
+function provisioning_print_end() {
+    local end_time=$(date +%s)
+    local elapsed=$((end_time - PROVISIONING_START_TIME))
+    local mins=$((elapsed / 60))
+    local secs=$((elapsed % 60))
+    echo -e "\n\e[1;32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m"
+    echo -e "\e[1;32m  ✅ Provisioning complete — took ${mins}m ${secs}s\e[0m"
+    echo -e "\e[1;32m  Application will start now\e[0m"
+    echo -e "\e[1;32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m\n"
+}
+
+function provisioning_has_valid_hf_token() {
+    [[ -n "$HF_TOKEN" ]] || return 1
+    url="https://huggingface.co/api/whoami-v2"
+    response=$(curl -o /dev/null -s -w "%{http_code}" -X GET "$url" \
+        -H "Authorization: Bearer $HF_TOKEN" \
+        -H "Content-Type: application/json")
+    if [ "$response" -eq 200 ]; then return 0; else return 1; fi
+}
+
+function provisioning_has_valid_civitai_token() {
+    [[ -n "$CIVITAI_TOKEN" ]] || return 1
+    url="https://civitai.com/api/v1/models?hidden=1&limit=1"
+    response=$(curl -o /dev/null -s -w "%{http_code}" -X GET "$url" \
+        -H "Authorization: Bearer $CIVITAI_TOKEN" \
+        -H "Content-Type: application/json")
+    if [ "$response" -eq 200 ]; then return 0; else return 1; fi
+}
+
+function provisioning_download() {
+    if [[ -n $HF_TOKEN && $1 =~ ^https://([a-zA-Z0-9_-]+\.)?huggingface\.co(/|$|\?) ]]; then
+        auth_token="$HF_TOKEN"
+    elif [[ -n $CIVITAI_TOKEN && $1 =~ ^https://([a-zA-Z0-9_-]+\.)?civitai\.com(/|$|\?) ]]; then
+        auth_token="$CIVITAI_TOKEN"
+    fi
+    if [[ -n $auth_token ]]; then
+        wget --header="Authorization: Bearer $auth_token" -qnc --content-disposition --show-progress -e dotbytes="${3:-4M}" -P "$2" "$1"
+    else
+        wget -qnc --content-disposition --show-progress -e dotbytes="${3:-4M}" -P "$2" "$1"
+    fi
+}
+
+if [[ ! -f /.noprovisioning ]]; then
+    provisioning_start
+fi
