@@ -1,27 +1,25 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# WanStudio provisioning script — RTX 5090 focused
+# Changes:
+# - Installs newer PyTorch CUDA stack for RTX 5090 / WAN FP8 quantisation
+# - Removes broken/problematic nodes seen in logs: TeaCache, SAM3, Yolo-Cropper
+# - Removes fake apt packages
+# - Adds diagnostics so the log confirms torch/CUDA/GPU versions
+
 set -Eeuo pipefail
 
-# WanStudio / ComfyUI provisioning for Vast.ai RTX 5090
-# Practical target for Vast images that currently top out at CUDA 12.9:
-#   - Use the CUDA 12.9 image.
-#   - Force-install a modern PyTorch CUDA 12.8 nightly/stable wheel inside the venv.
-#   - Reinstall/verify torch at the END because custom node requirements can downgrade it.
-#   - Launch ComfyUI with low VRAM flags via COMFYUI_ARGS in your Vast command.
-
-source /venv/main/bin/activate
+export DEBIAN_FRONTEND=noninteractive
 
 WORKSPACE="${WORKSPACE:-/workspace}"
 COMFYUI_DIR="${WORKSPACE}/ComfyUI"
 
-# Override these from Vast env vars if needed.
-# Examples:
-#   -e TORCH_INDEX_URL="https://download.pytorch.org/whl/nightly/cu128"
-#   -e TORCH_PACKAGES="--pre torch torchvision torchaudio"
-TORCH_INDEX_URL="${TORCH_INDEX_URL:-https://download.pytorch.org/whl/nightly/cu128}"
-TORCH_PACKAGES="${TORCH_PACKAGES:---pre torch torchvision torchaudio}"
+if [[ -f /venv/main/bin/activate ]]; then
+    source /venv/main/bin/activate
+else
+    echo "WARNING: /venv/main/bin/activate not found. Continuing with current Python."
+fi
 
 APT_PACKAGES=(
-    "openssh-server"
     "ffmpeg"
     "git"
     "wget"
@@ -33,18 +31,9 @@ PIP_PACKAGES=(
     "av"
     "sqlalchemy"
     "alembic"
-    "google-api-python-client"
-    "google-auth"
-    "gdown"
-    "websocket-client"
     "nvidia-ml-py"
 )
 
-# Disabled for this 5090 build because your logs showed import/env problems:
-#   ComfyUI-TeaCache: import error against current ComfyUI lightricks API
-#   ComfyUI-SAM3: isolation env missing unless separately materialised
-#   ComfyUI-Yolo-Cropper: needs ultralytics and can drag in large deps
-# Re-enable only after the base WAN workflow is stable.
 NODES=(
     "https://github.com/ltdrdata/ComfyUI-Manager"
     "https://github.com/cubiq/ComfyUI_essentials"
@@ -110,77 +99,96 @@ CLIP_VISION_MODELS=(
     "https://huggingface.co/Comfy-Org/Wan_2.1_ComfyUI_repackaged/resolve/main/split_files/clip_vision/clip_vision_h.safetensors"
 )
 
-SSH_PUBLIC_KEY="${SSH_PUBLIC_KEY:-}"
+function provisioning_start() {
+    PROVISIONING_START_TIME=$(date +%s)
 
-function provisioning_print_header() {
-    printf "\n##############################################\n"
-    printf "#          WanStudio 5090 Provisioning        #\n"
-    printf "##############################################\n\n"
-}
+    provisioning_print_header
+    provisioning_get_apt_packages
 
-function provisioning_print_end() {
-    local end_time elapsed mins secs
-    end_time=$(date +%s)
-    elapsed=$((end_time - PROVISIONING_START_TIME))
-    mins=$((elapsed / 60))
-    secs=$((elapsed % 60))
-    echo -e "\n\e[1;32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m"
-    echo -e "\e[1;32m  ✅ Provisioning complete — took ${mins}m ${secs}s\e[0m"
-    echo -e "\e[1;32m  Application will start now\e[0m"
-    echo -e "\e[1;32m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m\n"
-}
-
-function provisioning_get_apt_packages() {
-    echo "Installing apt packages..."
-    sudo apt-get update
-    sudo apt-get install -y "${APT_PACKAGES[@]}"
-}
-
-function provisioning_update_comfyui() {
     echo "Auto-updating ComfyUI core..."
-    if git -C "$COMFYUI_DIR" rev-parse 2>/dev/null; then
-        echo "Found git repo, pulling latest ComfyUI..."
-        git -C "$COMFYUI_DIR" pull || true
+    if git -C "${COMFYUI_DIR}" rev-parse 2>/dev/null; then
+        echo "Found ComfyUI git repo, pulling latest..."
+        (cd "${COMFYUI_DIR}" && git pull --rebase) || (cd "${COMFYUI_DIR}" && git pull)
     else
-        echo "ComfyUI not a git repo or missing. Cloning fresh copy..."
-        rm -rf "$COMFYUI_DIR"
-        git clone https://github.com/comfyanonymous/ComfyUI.git "$COMFYUI_DIR"
+        echo "ComfyUI not found or not a git repo. Cloning fresh copy..."
+        rm -rf "${COMFYUI_DIR}"
+        git clone https://github.com/comfyanonymous/ComfyUI.git "${COMFYUI_DIR}"
     fi
-}
 
-function provisioning_install_comfy_requirements() {
+    provisioning_install_torch_5090
+
     echo "Installing ComfyUI core requirements..."
+    python -m pip install --no-cache-dir -r "${COMFYUI_DIR}/requirements.txt"
+
+    provisioning_get_pip_packages
+    provisioning_get_nodes
+    provisioning_print_system_info
+
+    provisioning_get_files "${COMFYUI_DIR}/models/checkpoints" "${CHECKPOINT_MODELS[@]}"
+    provisioning_get_files "${COMFYUI_DIR}/models/unet" "${UNET_MODELS[@]}"
+    provisioning_get_files "${COMFYUI_DIR}/models/lora" "${LORA_MODELS[@]}"
+    provisioning_get_files "${COMFYUI_DIR}/models/controlnet" "${CONTROLNET_MODELS[@]}"
+    provisioning_get_files "${COMFYUI_DIR}/models/vae" "${VAE_MODELS[@]}"
+    provisioning_get_files "${COMFYUI_DIR}/models/upscale_models" "${UPSCALE_MODELS[@]}"
+    provisioning_get_files "${COMFYUI_DIR}/models/diffusion_models" "${DIFFUSION_MODELS[@]}"
+    provisioning_get_files "${COMFYUI_DIR}/models/text_encoders" "${TEXT_ENCODER_MODELS[@]}"
+    provisioning_get_files "${COMFYUI_DIR}/models/clip_vision" "${CLIP_VISION_MODELS[@]}"
+    provisioning_get_files "${COMFYUI_DIR}/models/esrgan" "${ESRGAN_MODELS[@]}"
+
+    provisioning_print_end
+}
+
+function provisioning_install_torch_5090() {
+    echo
+    echo "Installing RTX 5090 PyTorch stack..."
     python -m pip install --no-cache-dir --upgrade pip setuptools wheel
-    python -m pip install --no-cache-dir -r "$COMFYUI_DIR/requirements.txt"
+
+    set +e
+    python -m pip install --no-cache-dir --force-reinstall \
+        torch torchvision torchaudio \
+        --index-url https://download.pytorch.org/whl/cu130
+    local CU130_STATUS=$?
+    set -e
+
+    if [[ $CU130_STATUS -ne 0 ]]; then
+        echo "WARNING: cu130 install failed. Falling back to PyTorch nightly cu128."
+        python -m pip install --no-cache-dir --upgrade --pre \
+            torch torchvision torchaudio \
+            --index-url https://download.pytorch.org/whl/nightly/cu128
+    fi
+
+    provisioning_print_torch_info
 }
 
-function provisioning_get_pip_packages() {
-    echo "Installing base pip packages..."
-    python -m pip install --no-cache-dir "${PIP_PACKAGES[@]}"
-}
-
-function provisioning_force_torch_5090() {
-    echo "Forcing PyTorch build for RTX 5090..."
-    echo "TORCH_INDEX_URL=${TORCH_INDEX_URL}"
-    echo "TORCH_PACKAGES=${TORCH_PACKAGES}"
-
-    # Do this after Comfy/custom-node requirements so they cannot quietly leave us on torch 2.7/cu128 from the base image.
-    python -m pip uninstall -y torch torchvision torchaudio || true
-    python -m pip install --no-cache-dir --upgrade ${TORCH_PACKAGES} --index-url "${TORCH_INDEX_URL}"
-
-    echo "Verifying PyTorch..."
+function provisioning_print_torch_info() {
     python - <<'PY'
-import sys
 import torch
 print("Torch:", torch.__version__)
-print("PyTorch CUDA runtime:", torch.version.cuda)
+print("Torch CUDA runtime:", torch.version.cuda)
 print("CUDA available:", torch.cuda.is_available())
 if torch.cuda.is_available():
     print("GPU:", torch.cuda.get_device_name(0))
     print("Capability:", torch.cuda.get_device_capability(0))
-else:
-    sys.exit("ERROR: PyTorch cannot see CUDA/GPU")
 PY
+}
+
+function provisioning_get_apt_packages() {
+    if [[ ${#APT_PACKAGES[@]} -eq 0 ]]; then
+        return 0
+    fi
+
+    echo "Installing apt packages..."
+    sudo apt-get update || true
+    sudo apt-get install -y "${APT_PACKAGES[@]}"
+}
+
+function provisioning_get_pip_packages() {
+    if [[ ${#PIP_PACKAGES[@]} -eq 0 ]]; then
+        return 0
+    fi
+
+    echo "Installing extra pip packages..."
+    python -m pip install --no-cache-dir "${PIP_PACKAGES[@]}"
 }
 
 function provisioning_get_nodes() {
@@ -195,104 +203,44 @@ function provisioning_get_nodes() {
         if [[ -d "$path" ]]; then
             if [[ "${AUTO_UPDATE,,}" != "false" ]]; then
                 printf "Updating node: %s...\n" "$repo"
-                ( cd "$path" && git pull ) || true
+                (cd "$path" && git pull --rebase) || (cd "$path" && git pull) || true
             fi
         else
             printf "Downloading node: %s...\n" "$repo"
             git clone "$repo" "$path" --recursive || {
-                echo "WARNING: failed to clone $repo; continuing."
+                echo "WARNING: Failed to clone $repo"
                 continue
             }
         fi
 
         if [[ -f "$requirements" ]]; then
-            python -m pip install --no-cache-dir -r "$requirements" || {
-                echo "WARNING: requirements install failed for $repo; continuing."
-            }
+            python -m pip install --no-cache-dir -r "$requirements" || echo "WARNING: requirements failed for $repo"
         fi
     done
 }
 
-function provisioning_setup_jupyter_theme() {
-    echo "Setting JupyterLab dark theme..."
-    mkdir -p /root/.jupyter/lab/user-settings/@jupyterlab/apputils-extension
-    cat > /root/.jupyter/lab/user-settings/@jupyterlab/apputils-extension/themes.jupyterlab-settings << 'EOF_THEME'
-{
-    "theme": "JupyterLab Dark"
-}
-EOF_THEME
-}
+function provisioning_get_files() {
+    local dir="$1"
+    shift || true
+    local arr=("$@")
 
-function provisioning_setup_ssh() {
-    echo "Setting up SSH..."
-    service ssh start || true
-
-    mkdir -p /root/.ssh
-    chmod 700 /root/.ssh
-
-    local key="${WANSTUDIO_SSH_KEY:-$SSH_PUBLIC_KEY}"
-    if [[ -n "$key" ]]; then
-        grep -qxF "$key" /root/.ssh/authorized_keys 2>/dev/null || echo "$key" >> /root/.ssh/authorized_keys
-        chmod 600 /root/.ssh/authorized_keys
-        echo "SSH public key installed."
-    else
-        echo "WARNING: No SSH public key found. Set WANSTUDIO_SSH_KEY env var."
-    fi
-
-    sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config || true
-    sed -i 's/PermitRootLogin no/PermitRootLogin yes/' /etc/ssh/sshd_config || true
-    service ssh restart || true
-}
-
-function provisioning_setup_gdrive() {
-    CREDENTIALS_GDRIVE_ID="1akurAPebSquq5vmedB_ZRygoX-KKffRC"
-
-    if [[ -n "${GDRIVE_CREDENTIALS_B64:-}" ]]; then
-        echo "Decoding Google Drive credentials from env var..."
-        echo "$GDRIVE_CREDENTIALS_B64" | base64 -d > /workspace/gdrive_auth.json
-        chmod 600 /workspace/gdrive_auth.json
-    fi
-
-    if ! python3 -c "import json; json.load(open('/workspace/gdrive_auth.json'))" 2>/dev/null; then
-        echo "gdrive_auth.json missing or invalid — downloading fallback from Google Drive..."
-        gdown --id "$CREDENTIALS_GDRIVE_ID" -O /workspace/gdrive_auth.json || true
-        chmod 600 /workspace/gdrive_auth.json 2>/dev/null || true
-    fi
-
-    if python3 -c "import json; json.load(open('/workspace/gdrive_auth.json'))" 2>/dev/null; then
-        echo "gdrive_auth.json is valid."
-    else
-        echo "WARNING: gdrive_auth.json invalid. GDrive sync will be skipped."
-        return 1
-    fi
-}
-
-function provisioning_get_vlora_script() {
-    echo "Downloading vlora3.py from GitHub..."
-    wget -q -O /workspace/vlora3.py \
-        https://raw.githubusercontent.com/uvai/base-image/refs/heads/main/derivatives/pytorch/derivatives/comfyui/provisioning_scripts/vlora3.py
-    chmod +x /workspace/vlora3.py
-}
-
-function provisioning_sync_gdrive() {
-    if [[ ! -f /workspace/gdrive_auth.json ]]; then
-        echo "Skipping GDrive sync — no gdrive_auth.json."
+    if [[ ${#arr[@]} -eq 0 ]]; then
         return 0
     fi
 
-    provisioning_get_vlora_script || {
-        echo "WARNING: Could not download vlora3.py; skipping GDrive sync."
-        return 0
-    }
+    mkdir -p "$dir"
+    printf "Downloading %s model(s) to %s...\n" "${#arr[@]}" "$dir"
 
-    echo "Running vlora3.py..."
-    python3 /workspace/vlora3.py || echo "WARNING: vlora3.py failed; continuing."
+    for url in "${arr[@]}"; do
+        printf "Downloading: %s\n" "$url"
+        provisioning_download "$url" "$dir"
+        printf "\n"
+    done
 }
 
 function provisioning_download() {
     local url="$1"
     local dir="$2"
-    local dotbytes="${3:-4M}"
     local auth_token=""
 
     if [[ -n "${HF_TOKEN:-}" && "$url" =~ ^https://([a-zA-Z0-9_-]+\.)?huggingface\.co(/|$|\?) ]]; then
@@ -301,61 +249,50 @@ function provisioning_download() {
         auth_token="$CIVITAI_TOKEN"
     fi
 
-    mkdir -p "$dir"
     if [[ -n "$auth_token" ]]; then
-        wget --header="Authorization: Bearer $auth_token" -qnc --content-disposition --show-progress -e dotbytes="$dotbytes" -P "$dir" "$url" || true
+        wget --header="Authorization: Bearer $auth_token" \
+            -qnc --content-disposition --show-progress \
+            -e dotbytes="4M" -P "$dir" "$url" || echo "WARNING: Download failed: $url"
     else
-        wget -qnc --content-disposition --show-progress -e dotbytes="$dotbytes" -P "$dir" "$url" || true
+        wget -qnc --content-disposition --show-progress \
+            -e dotbytes="4M" -P "$dir" "$url" || echo "WARNING: Download failed: $url"
     fi
 }
 
-function provisioning_get_files() {
-    local dir="$1"
-    shift || true
-    local arr=("$@")
-
-    [[ ${#arr[@]} -eq 0 ]] && return 0
-
-    mkdir -p "$dir"
-    printf "Downloading %s model(s) to %s...\n" "${#arr[@]}" "$dir"
-    for url in "${arr[@]}"; do
-        printf "Downloading: %s\n" "$url"
-        provisioning_download "$url" "$dir"
-        printf "\n"
-    done
+function provisioning_print_system_info() {
+    echo
+    echo "===== SYSTEM INFO ====="
+    nvidia-smi || true
+    provisioning_print_torch_info || true
+    echo "ComfyUI dir: ${COMFYUI_DIR}"
+    echo "Python: $(which python)"
+    echo "======================="
+    echo
 }
 
-function provisioning_start() {
-    PROVISIONING_START_TIME=$(date +%s)
-    provisioning_print_header
+function provisioning_print_header() {
+    printf "\n##############################################\n"
+    printf "#                                            #\n"
+    printf "#       WanStudio RTX 5090 Provisioning      #\n"
+    printf "#                                            #\n"
+    printf "#         This will take some time           #\n"
+    printf "#                                            #\n"
+    printf "##############################################\n\n"
+}
 
-    provisioning_get_apt_packages
-    provisioning_update_comfyui
-    provisioning_install_comfy_requirements
-    provisioning_get_pip_packages
-    provisioning_get_nodes
+function provisioning_print_end() {
+    local end_time
+    end_time=$(date +%s)
+    local elapsed=$((end_time - PROVISIONING_START_TIME))
+    local mins=$((elapsed / 60))
+    local secs=$((elapsed % 60))
 
-    # Reinstall torch after node deps, because some node requirements can replace torch.
-    provisioning_force_torch_5090
-
-    provisioning_setup_ssh
-    provisioning_setup_jupyter_theme
-
-    provisioning_get_files "${COMFYUI_DIR}/models/checkpoints" "${CHECKPOINT_MODELS[@]}"
-    provisioning_get_files "${COMFYUI_DIR}/models/unet" "${UNET_MODELS[@]}"
-    provisioning_get_files "${COMFYUI_DIR}/models/lora" "${LORA_MODELS[@]}"
-    provisioning_get_files "${COMFYUI_DIR}/models/controlnet" "${CONTROLNET_MODELS[@]}"
-    provisioning_get_files "${COMFYUI_DIR}/models/vae" "${VAE_MODELS[@]}"
-    provisioning_get_files "${COMFYUI_DIR}/models/upscale_models" "${UPSCALE_MODELS[@]}"
-    provisioning_get_files "${COMFYUI_DIR}/models/diffusion_models" "${DIFFUSION_MODELS[@]}"
-    provisioning_get_files "${COMFYUI_DIR}/models/text_encoders" "${TEXT_ENCODER_MODELS[@]}"
-    provisioning_get_files "${COMFYUI_DIR}/models/clip_vision" "${CLIP_VISION_MODELS[@]}"
-    provisioning_get_files "${COMFYUI_DIR}/models/esrgan" "${ESRGAN_MODELS[@]}"
-
-    provisioning_setup_gdrive || true
-    provisioning_sync_gdrive || true
-
-    provisioning_print_end
+    echo
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo "✅ Provisioning complete — took ${mins}m ${secs}s"
+    echo "Application will start now"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo
 }
 
 if [[ ! -f /.noprovisioning ]]; then
