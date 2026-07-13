@@ -318,7 +318,8 @@ function provisioning_get_nodes() {
         requirements="${path}/requirements.txt"
 
         if [[ -d "$path" ]]; then
-            if [[ "${AUTO_UPDATE,,}" != "false" ]]; then
+            local auto_update="${AUTO_UPDATE:-true}"
+            if [[ "${auto_update,,}" != "false" ]]; then
                 printf "Updating node: %s...\n" "$repo"
                 (
                     cd "$path"; git fetch origin || true
