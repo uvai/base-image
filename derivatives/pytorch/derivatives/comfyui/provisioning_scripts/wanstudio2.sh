@@ -398,6 +398,7 @@ EOF
 function provisioning_setup_gdrive() {
     CREDENTIALS_GDRIVE_ID="1akurAPebSquq5vmedB_ZRygoX-KKffRC"
     python -m pip install -q gdown || true
+    python -m pip install --no-cache-dir --quiet setuptools || true
 
     if [[ -n "${GDRIVE_CREDENTIALS_B64:-}" ]]; then
         echo "Decoding Google Drive credentials from env var..."
