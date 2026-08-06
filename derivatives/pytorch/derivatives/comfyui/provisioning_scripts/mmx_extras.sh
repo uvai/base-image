@@ -1,27 +1,24 @@
 #!/usr/bin/env bash
-# mmx_extras.sh — Syncthing + browser terminal (ttyd) for the MiniMax instance.
-# Run from the Vast on-start after minimax_onstart.sh. Everything binds to
-# 127.0.0.1 only — reached via SSH tunnel (vgo handles the forwards).
+# mmx_extras.sh — browser terminal + direct NAS output sync for the MiniMax instance.
+# Run from the Vast on-start after minimax_onstart.sh.
 #
-# Env (set in the Vast template):
-#   SYNC_PEER_ID       your Mac/NAS Syncthing device ID (required to sync)
-#   SYNCTHING_ID_URL   optional secret URL to a tgz of cert.pem+key.pem giving
-#                      every instance the SAME device identity, so your Mac
-#                      trusts it once and future rentals sync automatically.
-#                      Without it, each new instance needs a one-click accept
-#                      on your Mac.
+# Env (Vast template):
+#   TS_AUTHKEY    Tailscale auth key (ephemeral, reusable, tag:vastbox)
+#   NAS_KEY_B64   base64 of a dedicated private SSH key authorized on the NAS
+#   NAS_DEST      e.g. alchera@100.x.y.z:/volume1/homes/alchera/vast
 #
-# Sync layout: /workspace/ComfyUI/output shared send-only as folder id "mmx-out".
+# Behaviour: joins the tailnet (userspace networking — no /dev/net/tun needed),
+# picks the next nebN folder on the NAS, then rsyncs /workspace/ComfyUI/output
+# there every 60s for the life of the instance. ttyd serves a browser terminal
+# on 127.0.0.1:7681 (reached via vgo's tunnel).
 
 set -u
-ST_HOME=/root/st
 LOG=/workspace/extras_setup.log
 exec >> "$LOG" 2>&1
 echo "=== mmx_extras $(date -u +%FT%TZ) ==="
 
 # ---------- ttyd (browser terminal) ------------------------------------------
 if ! command -v ttyd >/dev/null 2>&1; then
-    echo "[extras] installing ttyd"
     curl -fsSL -o /usr/local/bin/ttyd \
         https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.x86_64 \
         && chmod +x /usr/local/bin/ttyd \
@@ -29,59 +26,68 @@ if ! command -v ttyd >/dev/null 2>&1; then
 fi
 if command -v ttyd >/dev/null 2>&1 && ! pgrep -x ttyd >/dev/null; then
     nohup ttyd -p 7681 -i 127.0.0.1 -W tmux new -A -s vgo >/tmp/ttyd.log 2>&1 &
-    echo "[extras] ttyd on 127.0.0.1:7681 (tmux session 'vgo')"
+    echo "[extras] ttyd on 127.0.0.1:7681"
 fi
 
-# ---------- syncthing ---------------------------------------------------------
-if ! command -v syncthing >/dev/null 2>&1; then
-    echo "[extras] installing syncthing"
-    apt-get update -qq && apt-get install -y -qq syncthing \
-    || {  # fallback: official static binary
-        echo "[extras] apt failed, fetching binary"
-        ARCH=linux-amd64
-        VER=$(curl -fsSL https://api.github.com/repos/syncthing/syncthing/releases/latest | grep -oP '"tag_name":\s*"\K[^"]+')
-        curl -fsSL "https://github.com/syncthing/syncthing/releases/download/${VER}/syncthing-${ARCH}-${VER}.tar.gz" \
-          | tar xz -C /tmp
-        mv /tmp/syncthing-${ARCH}-${VER}/syncthing /usr/local/bin/
-    }
+# ---------- NAS sync via Tailscale --------------------------------------------
+if [ -z "${TS_AUTHKEY:-}" ] || [ -z "${NAS_KEY_B64:-}" ] || [ -z "${NAS_DEST:-}" ]; then
+    echo "[extras] TS_AUTHKEY/NAS_KEY_B64/NAS_DEST not all set — skipping NAS sync"
+    exit 0
 fi
 
-mkdir -p "$ST_HOME" /workspace/ComfyUI/output
+# deps
+command -v rsync >/dev/null 2>&1 || apt-get install -y -qq rsync
+command -v nc >/dev/null 2>&1 || apt-get install -y -qq netcat-openbsd
 
-# Fixed identity, if provided (BEFORE generate, so it's kept not created)
-if [ -n "${SYNCTHING_ID_URL:-}" ] && [ ! -f "$ST_HOME/cert.pem" ]; then
-    echo "[extras] fetching fixed syncthing identity"
-    curl -fsSL "$SYNCTHING_ID_URL" | tar xz -C "$ST_HOME" \
-        || echo "[extras] WARN: identity fetch failed — will generate fresh"
+# tailscale
+if ! command -v tailscale >/dev/null 2>&1; then
+    echo "[extras] installing tailscale"
+    curl -fsSL https://tailscale.com/install.sh | sh >/dev/null 2>&1 \
+        || { echo "[extras] ERROR: tailscale install failed"; exit 0; }
 fi
-
-[ -f "$ST_HOME/config.xml" ] || syncthing generate --home="$ST_HOME" --no-default-folder >/dev/null 2>&1 \
-    || syncthing generate --home="$ST_HOME" >/dev/null 2>&1
-
-if ! pgrep -f "syncthing.*$ST_HOME" >/dev/null; then
-    nohup syncthing serve --no-browser --home="$ST_HOME" \
-        --gui-address=127.0.0.1:8384 >/tmp/syncthing.log 2>&1 &
+if ! pgrep -x tailscaled >/dev/null; then
+    nohup tailscaled --state=/root/ts.state \
+        --tun=userspace-networking \
+        --socks5-server=127.0.0.1:1055 >/tmp/tailscaled.log 2>&1 &
+    sleep 3
 fi
+tailscale up --authkey="$TS_AUTHKEY" --hostname="mmx-vast-$(hostname | tr -c 'a-zA-Z0-9\n' -)" \
+    || { echo "[extras] ERROR: tailscale up failed"; exit 0; }
+echo "[extras] tailnet joined as $(tailscale ip -4 2>/dev/null | head -1)"
 
-# wait for the API
-for i in $(seq 1 30); do
-    curl -sf http://127.0.0.1:8384/rest/noauth/health >/dev/null 2>&1 && break
-    sleep 1
-done
+# NAS ssh key
+mkdir -p /root/.ssh && chmod 700 /root/.ssh
+echo "$NAS_KEY_B64" | base64 -d > /root/.ssh/mmx_nas_key
+chmod 600 /root/.ssh/mmx_nas_key
 
-MYID=$(syncthing cli --home="$ST_HOME" show system 2>/dev/null | grep -oP '"myID":\s*"\K[^"]+' || true)
-echo "[extras] syncthing device ID: ${MYID:-unknown}"
+NAS_USERHOST="${NAS_DEST%%:*}"
+NAS_BASE="${NAS_DEST#*:}"
+# userspace networking: reach tailnet IPs via the local SOCKS5 proxy
+NAS_SSH="ssh -i /root/.ssh/mmx_nas_key -o ProxyCommand='nc -X 5 -x 127.0.0.1:1055 %h %p' -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15"
 
-# peer + shared output folder (send-only)
-if [ -n "${SYNC_PEER_ID:-}" ]; then
-    syncthing cli --home="$ST_HOME" config devices add --device-id "$SYNC_PEER_ID" 2>/dev/null || true
-    syncthing cli --home="$ST_HOME" config folders add \
-        --id mmx-out --label "MiniMax outputs" --path /workspace/ComfyUI/output 2>/dev/null || true
-    syncthing cli --home="$ST_HOME" config folders mmx-out type set sendonly 2>/dev/null || true
-    syncthing cli --home="$ST_HOME" config folders mmx-out devices add --device-id "$SYNC_PEER_ID" 2>/dev/null || true
-    echo "[extras] sharing /workspace/ComfyUI/output (send-only) with $SYNC_PEER_ID"
+# session folder: next nebN on the NAS, sticky for this instance
+NEB_FILE=/root/.neb_session
+if [ -f "$NEB_FILE" ]; then
+    NEB=$(cat "$NEB_FILE")
 else
-    echo "[extras] SYNC_PEER_ID not set — syncthing running but sharing nothing"
+    LAST=$(eval "$NAS_SSH" "$NAS_USERHOST" "\"ls -1d $NAS_BASE/neb* 2>/dev/null\"" \
+           | grep -oE 'neb[0-9]+$' | grep -oE '[0-9]+' | sort -n | tail -1)
+    NEB="neb$(( ${LAST:-0} + 1 ))"
+    eval "$NAS_SSH" "$NAS_USERHOST" "\"mkdir -p $NAS_BASE/$NEB\"" \
+        || { echo "[extras] ERROR: cannot create $NAS_BASE/$NEB on NAS"; exit 0; }
+    echo "$NEB" > "$NEB_FILE"
 fi
+echo "[extras] session folder: $NAS_BASE/$NEB"
 
-echo "[extras] done. GUI 127.0.0.1:8384, terminal 127.0.0.1:7681"
+# sync loop (background, lives as long as the instance)
+mkdir -p /workspace/ComfyUI/output
+nohup bash -c '
+NAS_SSH="'"$NAS_SSH"'"
+while true; do
+    rsync -a --partial -e "$NAS_SSH" \
+        /workspace/ComfyUI/output/ "'"$NAS_USERHOST"':'"$NAS_BASE"'/'"$NEB"'/" \
+        >> /workspace/nas_sync.log 2>&1 \
+        || echo "$(date "+%F %T") sync pass failed" >> /workspace/nas_sync.log
+    sleep 60
+done' >/dev/null 2>&1 &
+echo "[extras] NAS sync loop started (every 60s) -> $NAS_BASE/$NEB"
