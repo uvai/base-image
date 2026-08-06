@@ -57,13 +57,17 @@ echo "[extras] tailnet joined as $(tailscale ip -4 2>/dev/null | head -1)"
 
 # NAS ssh key
 mkdir -p /root/.ssh && chmod 700 /root/.ssh
-echo "$NAS_KEY_B64" | base64 -d > /root/.ssh/mmx_nas_key
+if ! echo "$NAS_KEY_B64" | base64 -d > /root/.ssh/mmx_nas_key 2>/dev/null \
+   || ! grep -q "BEGIN OPENSSH PRIVATE KEY" /root/.ssh/mmx_nas_key; then
+    echo "[extras] ERROR: NAS_KEY_B64 does not decode to an OpenSSH key — check the env var (must be single-line base64)"
+    exit 0
+fi
 chmod 600 /root/.ssh/mmx_nas_key
 
 NAS_USERHOST="${NAS_DEST%%:*}"
 NAS_BASE="${NAS_DEST#*:}"
 # userspace networking: reach tailnet IPs via the local SOCKS5 proxy
-NAS_SSH="ssh -i /root/.ssh/mmx_nas_key -o ProxyCommand='nc -X 5 -x 127.0.0.1:1055 %h %p' -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15"
+NAS_SSH="ssh -i /root/.ssh/mmx_nas_key -o ProxyCommand='nc -X 5 -x 127.0.0.1:1055 %h %p' -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15 -o BatchMode=yes"
 
 # session folder: next nebN on the NAS, sticky for this instance
 NEB_FILE=/root/.neb_session
