@@ -129,3 +129,94 @@ mkdir -p "$WF_DIR"
 curl -fsSL "$WORKFLOWS_URL" | tar xz -C "$WF_DIR" --strip-components=1 \
     && echo "[additional_params] user workflows installed" \
     || echo "[additional_params] WARN: workflow fetch failed (tarball missing or URL wrong?)"
+
+# ── 5. GDrive LoRA sync (loras_minimax) ──────────────────────────────────────
+# Pulls every file from the Drive folder named "loras_minimax" (shared with the
+# service account) into models/loras. Auth: GDRIVE_CREDENTIALS_B64 env var
+# (service-account JSON, base64 — same credential pattern as wanstudio3.sh).
+# Optional: GDRIVE_MINIMAX_LORA_FOLDER_ID pins the folder by ID.
+# Logs append to /workspace/extra_models.log (visible live in vgo).
+if [ -n "${GDRIVE_CREDENTIALS_B64:-}" ]; then
+    echo "$GDRIVE_CREDENTIALS_B64" | base64 -d > /workspace/gdrive_auth.json 2>/dev/null
+    chmod 600 /workspace/gdrive_auth.json
+
+    cat > /root/gdrive_lora_sync.py <<'PYEOF'
+import os, json
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
+from google.oauth2.service_account import Credentials
+
+TARGET = "/workspace/ComfyUI/models/loras"
+FOLDER_NAME = "loras_minimax"
+FOLDER_ID = os.environ.get("GDRIVE_MINIMAX_LORA_FOLDER_ID", "")
+
+creds = Credentials.from_service_account_file(
+    "/workspace/gdrive_auth.json",
+    scopes=["https://www.googleapis.com/auth/drive.readonly"])
+svc = build("drive", "v3", credentials=creds)
+sa_email = json.load(open("/workspace/gdrive_auth.json")).get("client_email", "?")
+
+if not FOLDER_ID:
+    q = ("name = '" + FOLDER_NAME + "' and "
+         "mimeType = 'application/vnd.google-apps.folder' and trashed = false")
+    hits = svc.files().list(q=q, fields="files(id, name)", pageSize=10).execute().get("files", [])
+    if not hits:
+        print(f"[gdrive] folder '{FOLDER_NAME}' not found — is it shared with {sa_email}?")
+        raise SystemExit(0)
+    if len(hits) > 1:
+        print(f"[gdrive] WARNING: {len(hits)} folders named {FOLDER_NAME}; using first. "
+              "Pin with GDRIVE_MINIMAX_LORA_FOLDER_ID.")
+    FOLDER_ID = hits[0]["id"]
+
+files, tok = [], None
+while True:
+    r = svc.files().list(q=f"'{FOLDER_ID}' in parents and trashed = false",
+                         fields="nextPageToken, files(id, name, size, mimeType)",
+                         pageSize=1000, pageToken=tok).execute()
+    files += r.get("files", [])
+    tok = r.get("nextPageToken")
+    if not tok:
+        break
+files = [f for f in files if f.get("mimeType") != "application/vnd.google-apps.folder"]
+suffix = "" if files else f" — if unexpected, share the folder with {sa_email}"
+print(f"[gdrive] {FOLDER_NAME}: {len(files)} file(s){suffix}")
+
+os.makedirs(TARGET, exist_ok=True)
+for f in files:
+    dest = os.path.join(TARGET, f["name"])
+    dsize = int(f.get("size", 0) or 0)
+    if os.path.exists(dest) and dsize and os.path.getsize(dest) == dsize:
+        print(f"[gdrive] skip (exists): {f['name']}")
+        continue
+    print(f"[gdrive] fetching: {f['name']} ({dsize // 1048576} MB)", flush=True)
+    tmp = dest + ".part"
+    try:
+        with open(tmp, "wb") as fh:
+            dl = MediaIoBaseDownload(fh, svc.files().get_media(fileId=f["id"]),
+                                     chunksize=16 * 1024 * 1024)
+            done = False
+            while not done:
+                _, done = dl.next_chunk()
+        if dsize and os.path.getsize(tmp) != dsize:
+            raise IOError(f"size mismatch: {os.path.getsize(tmp)} != {dsize}")
+        os.replace(tmp, dest)
+        print(f"[gdrive] done: {f['name']}")
+    except Exception as e:
+        print(f"[gdrive] FAILED: {f['name']}: {e}")
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+print("[gdrive] loras_minimax sync complete")
+PYEOF
+
+    setsid nohup bash -c '
+        LOG=/workspace/extra_models.log
+        echo "=== gdrive loras_minimax $(date -u +%FT%TZ) ===" >> "$LOG"
+        pip install -q google-api-python-client google-auth >> "$LOG" 2>&1
+        python3 /root/gdrive_lora_sync.py >> "$LOG" 2>&1
+    ' >/dev/null 2>&1 < /dev/null &
+    echo "[additional_params] gdrive loras_minimax sync started"
+else
+    echo "[additional_params] GDRIVE_CREDENTIALS_B64 not set — gdrive lora sync skipped"
+fi
