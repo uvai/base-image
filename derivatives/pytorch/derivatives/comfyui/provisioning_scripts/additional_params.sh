@@ -36,7 +36,13 @@ WORKFLOWS_URL="https://raw.githubusercontent.com/uvai/base-image/main/derivative
 # Custom nodes cloned before ComfyUI starts (no restart needed).
 CUSTOM_NODES=(
     "https://github.com/rgthree/rgthree-comfy.git"
+    "https://github.com/kijai/ComfyUI-KJNodes.git"
 )
+
+# Global SageAttention: DISABLED by default (its kernels NaN-black FLUX.2 Klein
+# renders, 2026-08-07). MiniMax workflows re-enable it per-run via KJNodes'
+# "Patch Sage Attention" node. Set KEEP_GLOBAL_SAGE=true for a MiniMax-only
+# session where the global flag is wanted back.
 
 # ── 1. neuter jupyter-lab ────────────────────────────────────────────────────
 mkdir -p /usr/local/sbin
@@ -47,6 +53,18 @@ exit 0
 EOF
 chmod +x /usr/local/sbin/jupyter-lab
 echo "[additional_params] JupyterLab disabled"
+
+# ── 1b. disable global sage-attention (see note above) ───────────────────────
+if [ "${KEEP_GLOBAL_SAGE:-false}" != "true" ]; then
+    # runs before start.sh's sage section: no wheel -> source-build path;
+    # pre-poisoned clone dir -> build fails fast -> ComfyUI starts sage-less.
+    rm -f /opt/sage/*.whl 2>/dev/null
+    pip uninstall -y -q sageattention >/dev/null 2>&1
+    mkdir -p /tmp/SageAttention/poison
+    echo "[additional_params] global sage-attention disabled (per-workflow via KJNodes)"
+else
+    echo "[additional_params] KEEP_GLOBAL_SAGE=true — leaving sage-attention active"
+fi
 
 # ── 2. model downloads (backgrounded; log /workspace/extra_models.log) ───────
 MODELS_ROOT=/workspace/ComfyUI/models
@@ -72,6 +90,8 @@ if [ -n "${EXTRA_HF_MODELS:-}" ]; then
 fi
 
 if [ -s "$MANIFEST" ]; then
+    # copy aria2c under a different name: the image boot waits on `pgrep -x aria2c`
+    command -v aria2c >/dev/null 2>&1 && cp -f "$(command -v aria2c)" /usr/local/bin/aria2uv
     nohup bash -c '
         LOG=/workspace/extra_models.log
         echo "=== extra models $(date -u +%FT%TZ) ===" >> "$LOG"
@@ -84,8 +104,8 @@ if [ -s "$MANIFEST" ]; then
                 echo "skip (exists): $subdir/$fname" >> "$LOG"; continue
             fi
             echo "fetching: $subdir/$fname" >> "$LOG"
-            if command -v aria2c >/dev/null 2>&1; then
-                aria2c -x8 -s8 --continue=true --auto-file-renaming=false \
+            if command -v aria2uv >/dev/null 2>&1; then
+                aria2uv -x8 -s8 --continue=true --auto-file-renaming=false \
                     ${HF_TOKEN:+--header="Authorization: Bearer $HF_TOKEN"} \
                     -d "'"$MODELS_ROOT"'/$subdir" -o "$fname" "$url" >> "$LOG" 2>&1
             else
