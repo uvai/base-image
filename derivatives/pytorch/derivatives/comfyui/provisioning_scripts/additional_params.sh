@@ -104,8 +104,12 @@ if [ -s "$MANIFEST" ]; then
                 echo "skip (exists): $subdir/$fname" >> "$LOG"; continue
             fi
             echo "fetching: $subdir/$fname" >> "$LOG"
+            # HF xet CDN signs redirects per byte-range: parallel connections
+            # 403 mid-file (2026-08-07). Single stream + retries for hf.co.
+            case "$url" in *huggingface.co*) CONN="-x1 -s1";; *) CONN="-x8 -s8";; esac
             if command -v aria2uv >/dev/null 2>&1; then
-                aria2uv -x8 -s8 --continue=true --auto-file-renaming=false \
+                aria2uv $CONN --continue=true --auto-file-renaming=false \
+                    --max-tries=15 --retry-wait=5 \
                     ${HF_TOKEN:+--header="Authorization: Bearer $HF_TOKEN"} \
                     -d "'"$MODELS_ROOT"'/$subdir" -o "$fname" "$url" >> "$LOG" 2>&1
             else
