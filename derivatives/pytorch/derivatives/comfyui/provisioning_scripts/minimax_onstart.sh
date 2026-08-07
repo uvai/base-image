@@ -29,6 +29,15 @@ export RUNPOD_POD_ID="${VAST_CONTAINERLABEL:-vast}"
 # disk at the same path so all of start.sh's persistence logic works unchanged.
 mkdir -p /workspace
 
+# ---- additional_params hook --------------------------------------------------
+# Fetched here (not in the Vast on-start) because /workspace must exist first —
+# a curl -o into a not-yet-created /workspace fails silently and start.sh then
+# skips the hook. This is the versioned, ordering-proof home for it.
+curl -fsSL "https://raw.githubusercontent.com/uvai/base-image/main/derivatives/pytorch/derivatives/comfyui/provisioning_scripts/additional_params.sh" \
+    -o /workspace/additional_params.sh \
+    && echo "[onstart] additional_params.sh fetched" \
+    || echo "[onstart] WARN: additional_params.sh fetch failed"
+
 # ---- idempotency guard ------------------------------------------------------
 # Vast re-runs onstart on instance restart; start.sh is not fully re-entrant
 # (git clones, moves). Skip if ComfyUI is already up or a boot is in flight.
