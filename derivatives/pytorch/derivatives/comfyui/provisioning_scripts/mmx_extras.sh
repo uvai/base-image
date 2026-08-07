@@ -78,14 +78,30 @@ NAS_USERHOST="${NAS_DEST%%:*}"
 NAS_BASE="${NAS_DEST#*:}"
 NAS_SSH="ssh -i /root/.ssh/mmx_nas_key -o ProxyCommand='nc -X 5 -x 127.0.0.1:1055 %h %p' -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15"
 
+# wait for the NAS to be reachable through the fresh tailnet path — the first
+# seconds after tailscale up can drop connections, and a failed listing must
+# not be mistaken for an empty directory (the neb1 bug, 2026-08-07).
+NAS_UP=""
+for i in $(seq 1 12); do
+    if eval "$NAS_SSH" "$NAS_USERHOST" "\"true\"" 2>/dev/null; then NAS_UP=1; break; fi
+    log "NAS not reachable yet (attempt $i/12), retrying in 5s"
+    sleep 5
+done
+[ -z "$NAS_UP" ] && { log "ERROR: NAS unreachable after 60s — no sync this session"; exit 1; }
+
 # session folder (sticky per instance)
 NEB_FILE=/root/.neb_session
 if [ -f "$NEB_FILE" ]; then
     NEB=$(cat "$NEB_FILE")
     log "resuming session $NEB"
 else
-    LAST=$(eval "$NAS_SSH" "$NAS_USERHOST" "\"ls -1d $NAS_BASE/neb* 2>/dev/null\"" \
-           | grep -oE 'neb[0-9]+$' | grep -oE '[0-9]+' | sort -n | tail -1)
+    LISTING=$(eval "$NAS_SSH" "$NAS_USERHOST" "\"ls -1d $NAS_BASE/neb* 2>/dev/null\"") || LISTING=""
+    LAST=$(printf '%s\n' "$LISTING" | grep -oE 'neb[0-9]+$' | grep -oE '[0-9]+' | sort -n | tail -1)
+    # empty listing on a base dir that should have history is suspicious — verify
+    # the base dir itself before defaulting to neb1
+    if [ -z "$LAST" ] && ! eval "$NAS_SSH" "$NAS_USERHOST" "\"test -d $NAS_BASE\""; then
+        log "ERROR: $NAS_BASE missing on NAS — check NAS_DEST"; exit 1
+    fi
     NEB="neb$(( ${LAST:-0} + 1 ))"
     eval "$NAS_SSH" "$NAS_USERHOST" "\"mkdir -p $NAS_BASE/$NEB\"" \
         || { log "ERROR: cannot create $NAS_BASE/$NEB"; exit 1; }
