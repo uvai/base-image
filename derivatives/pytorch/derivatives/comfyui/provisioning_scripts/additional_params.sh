@@ -66,10 +66,20 @@ else
     echo "[additional_params] KEEP_GLOBAL_SAGE=true — leaving sage-attention active"
 fi
 
-# ── 2. model downloads (backgrounded; log /workspace/extra_models.log) ───────
+# ── 2. model downloads (detached worker; log /workspace/extra_models.log) ────
+# v2 2026-08-10: the fetch loop is now a setsid-detached worker. Plain
+# `nohup ... &` left it in the on-start process group, which Vast reaps
+# mid-boot (the 2026-08-06 mmx_extras failure mode) — the loop died partway
+# through the Klein diffusion files and never reached qwen / the VAE.
+# Completeness is now judged by aria2's .aria2 control file (curl path uses
+# .part + rename), not the bare >=10MB heuristic, which blessed truncated
+# multi-GB partials as complete on the next boot.
+# NOTE one-time cleanup: partials left by the old code are bare files with no
+# .aria2 marker and will still pass the size check — delete any suspect
+# models on an existing instance before relying on this.
 MODELS_ROOT=/workspace/ComfyUI/models
-MANIFEST=/tmp/extra_models_manifest.tsv
-: > "$MANIFEST"
+MANIFEST="/tmp/extra_models_manifest.$$.tsv"   # unique per pass: a restart must
+: > "$MANIFEST"                                # not truncate a live worker's file
 add_models() {  # add_models <subdir> <url>...
     local subdir="$1"; shift
     local url
@@ -92,38 +102,63 @@ fi
 if [ -s "$MANIFEST" ]; then
     # copy aria2c under a different name: the image boot waits on `pgrep -x aria2c`
     command -v aria2c >/dev/null 2>&1 && cp -f "$(command -v aria2c)" /usr/local/bin/aria2uv
-    nohup bash -c '
-        LOG=/workspace/extra_models.log
-        echo "=== extra models $(date -u +%FT%TZ) ===" >> "$LOG"
-        while IFS=$'"'"'\t'"'"' read -r url subdir; do
-            [ -z "$url" ] && continue
-            fname=$(basename "${url%%\?*}")
-            dest="'"$MODELS_ROOT"'/$subdir/$fname"
-            mkdir -p "'"$MODELS_ROOT"'/$subdir"
-            if [ -f "$dest" ] && [ "$(stat -c%s "$dest")" -ge $((10*1024*1024)) ]; then
-                echo "skip (exists): $subdir/$fname" >> "$LOG"; continue
-            fi
-            echo "fetching: $subdir/$fname" >> "$LOG"
-            # HF xet CDN signs redirects per byte-range: parallel connections
-            # 403 mid-file (2026-08-07). Single stream + retries for hf.co.
-            case "$url" in *huggingface.co*) CONN="-x1 -s1";; *) CONN="-x8 -s8";; esac
-            if command -v aria2uv >/dev/null 2>&1; then
-                aria2uv $CONN --continue=true --auto-file-renaming=false \
-                    --max-tries=15 --retry-wait=5 \
-                    ${HF_TOKEN:+--header="Authorization: Bearer $HF_TOKEN"} \
-                    -d "'"$MODELS_ROOT"'/$subdir" -o "$fname" "$url" >> "$LOG" 2>&1
-            else
-                curl -fL --retry 3 -C - \
-                    ${HF_TOKEN:+-H "Authorization: Bearer $HF_TOKEN"} \
-                    -o "$dest" "$url" >> "$LOG" 2>&1
-            fi
-            [ -f "$dest" ] && [ "$(stat -c%s "$dest")" -ge $((10*1024*1024)) ] \
-                && echo "done: $subdir/$fname ($(du -h "$dest" | cut -f1))" >> "$LOG" \
-                || echo "FAILED: $subdir/$fname" >> "$LOG"
-        done < '"$MANIFEST"'
-        echo "=== extra models complete ===" >> "$LOG"
-    ' >/dev/null 2>&1 &
-    echo "[additional_params] model fetch started ($(wc -l < "$MANIFEST") items; log: /workspace/extra_models.log)"
+
+    cat > /root/extra_models_worker.sh <<'WEOF'
+#!/usr/bin/env bash
+# extra_models_worker.sh — detached model fetcher, written by additional_params.sh.
+# Env (exported by parent): MODELS_ROOT, MANIFEST, HF_TOKEN (optional).
+set -u
+LOG=/workspace/extra_models.log
+echo "=== extra models $(date -u +%FT%TZ) (worker pid $$) ===" >> "$LOG"
+
+complete() {  # true if $1 looks fully downloaded
+    # aria2 keeps <file>.aria2 until the transfer finishes, so a partial from
+    # a killed pass is detectable; curl path never writes to the final name.
+    [ -f "$1" ] && [ ! -f "$1.aria2" ] && [ "$(stat -c%s "$1")" -ge $((10*1024*1024)) ]
+}
+
+while IFS=$'\t' read -r url subdir; do
+    [ -z "$url" ] && continue
+    fname=$(basename "${url%%\?*}")
+    dest="$MODELS_ROOT/$subdir/$fname"
+    mkdir -p "$MODELS_ROOT/$subdir"
+    if complete "$dest"; then
+        echo "skip (exists): $subdir/$fname" >> "$LOG"; continue
+    fi
+    echo "fetching: $subdir/$fname" >> "$LOG"
+    # HF xet CDN signs redirects per byte-range: parallel connections
+    # 403 mid-file (2026-08-07). Single stream + retries for hf.co.
+    case "$url" in *huggingface.co*) CONN="-x1 -s1";; *) CONN="-x8 -s8";; esac
+    if command -v aria2uv >/dev/null 2>&1; then
+        # a bare sub-10MB stub with no .aria2 control file confuses aria2
+        # (--continue needs the control file) — clear it and start clean
+        [ -f "$dest" ] && [ ! -f "$dest.aria2" ] && rm -f "$dest"
+        aria2uv $CONN --continue=true --auto-file-renaming=false \
+            --max-tries=15 --retry-wait=5 \
+            ${HF_TOKEN:+--header="Authorization: Bearer $HF_TOKEN"} \
+            -d "$MODELS_ROOT/$subdir" -o "$fname" "$url" >> "$LOG" 2>&1
+    else
+        # fetch to .part, rename on success: a killed pass never leaves a
+        # plausible-looking $dest (same atomic pattern as the gdrive sync)
+        curl -fL --retry 3 -C - \
+            ${HF_TOKEN:+-H "Authorization: Bearer $HF_TOKEN"} \
+            -o "$dest.part" "$url" >> "$LOG" 2>&1 \
+            && mv -f "$dest.part" "$dest"
+    fi
+    if complete "$dest"; then
+        echo "done: $subdir/$fname ($(du -h "$dest" | cut -f1))" >> "$LOG"
+    else
+        echo "FAILED: $subdir/$fname" >> "$LOG"
+    fi
+done < "$MANIFEST"
+echo "=== extra models complete ===" >> "$LOG"
+WEOF
+    chmod +x /root/extra_models_worker.sh
+
+    export MODELS_ROOT MANIFEST
+    [ -n "${HF_TOKEN:-}" ] && export HF_TOKEN
+    setsid nohup /root/extra_models_worker.sh >/dev/null 2>&1 < /dev/null &
+    echo "[additional_params] model fetch detached (pid $!, $(wc -l < "$MANIFEST") items; log: /workspace/extra_models.log)"
 fi
 
 # ── 3. custom nodes ──────────────────────────────────────────────────────────
