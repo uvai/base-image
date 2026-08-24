@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # additional_params.sh — hooks run by the image's /start.sh before Jupyter/ComfyUI.
-# Baseline posture: MiniMax-only (JupyterLab disabled, nothing else runs).
+# Baseline posture: MiniMax-only (JupyterLab disabled) + ComfyUI Manager and
+# the MiniMaxRefPack custom node (needed by the v4 H3 reference workflow).
 #
 # Klein sessions: set DOWNLOAD_KLEIN=true in the Vast template env to pull the
 # FLUX.2 Klein 9B stack (bf16) in a detached worker via `hf download`.
@@ -34,6 +35,13 @@ set -u
 LOG=/workspace/extra_models.log
 M=/workspace/ComfyUI/models
 echo "=== klein fetch $(date -u +%FT%TZ) (worker pid $$) ===" >> "$LOG"
+# Wait for the image's own model downloads first: competing streams collapsed
+# the H3 pulls from ~290MB/s to single digits (2026-08-23). Cap 30 min.
+for _i in $(seq 1 90); do
+    pgrep -f "hf_download_manager|workflow_provisioner" >/dev/null 2>&1 || break
+    sleep 20
+done
+echo "=== klein fetch proceeding $(date -u +%FT%TZ) ===" >> "$LOG"
 pip install -q -U huggingface_hub >> "$LOG" 2>&1
 mkdir -p "$M/diffusion_models" "$M/text_encoders" "$M/vae"
 ok=1
@@ -69,4 +77,36 @@ WEOF
     echo "[additional_params] klein fetch detached (pid $!; log: /workspace/extra_models.log)"
 else
     echo "[additional_params] DOWNLOAD_KLEIN not set — MiniMax-only session"
+fi
+
+# ── 3. ComfyUI Manager + MiniMax RefPack ─────────────────────────────────────
+# v4 image: the app lives at /ComfyUI (not /workspace/ComfyUI) and the H3
+# reference workflow needs Hearmeman24/ComfyUI-MiniMaxRefPack, whose registry
+# install fails silently (2026-08-23). Clone it directly, install Manager,
+# and patch --enable-manager into start.sh's launch line before it runs.
+CUI=""
+for d in /ComfyUI /workspace/ComfyUI; do
+    [ -f "$d/main.py" ] && CUI="$d" && break
+done
+if [ -n "$CUI" ]; then
+    python3 -m pip install -q -U --pre comfyui-manager \
+        && echo "[additional_params] comfyui-manager installed"
+    if [ -f /start.sh ] && ! grep -q "enable-manager" /start.sh; then
+        sed -i 's|/main\.py" --listen|/main.py" --enable-manager --listen|' /start.sh \
+            && echo "[additional_params] --enable-manager patched into /start.sh"
+    fi
+    CN="$CUI/custom_nodes"
+    mkdir -p "$CN"
+    if [ ! -d "$CN/ComfyUI-MiniMaxRefPack" ]; then
+        git clone --depth 1 https://github.com/Hearmeman24/ComfyUI-MiniMaxRefPack \
+            "$CN/ComfyUI-MiniMaxRefPack" >/dev/null 2>&1 \
+            && { [ -f "$CN/ComfyUI-MiniMaxRefPack/requirements.txt" ] \
+                 && python3 -m pip install -q -r "$CN/ComfyUI-MiniMaxRefPack/requirements.txt"; \
+                 echo "[additional_params] MiniMaxRefPack installed -> $CN"; } \
+            || echo "[additional_params] WARN: MiniMaxRefPack clone failed"
+    else
+        echo "[additional_params] MiniMaxRefPack already present"
+    fi
+else
+    echo "[additional_params] WARN: no ComfyUI main.py found — manager/refpack skipped"
 fi
