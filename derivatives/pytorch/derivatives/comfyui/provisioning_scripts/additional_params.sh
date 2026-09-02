@@ -3,6 +3,9 @@
 # Baseline posture: MiniMax-only (JupyterLab disabled) + ComfyUI Manager and
 # the MiniMaxRefPack custom node (needed by the v4 H3 reference workflow).
 #
+# Hybrid H3 model (smhfacct fl2va+ref2va int8) downloads by default; set
+# DOWNLOAD_HYBRID=false in the template env to skip it (~21GB).
+#
 # Klein sessions: set DOWNLOAD_KLEIN=true in the Vast template env to pull the
 # FLUX.2 Klein 9B stack (bf16) in a detached worker via `hf download`.
 # Global sage stays ON — verified clean with Klein 9B bf16 on this image
@@ -36,9 +39,17 @@ LOG=/workspace/extra_models.log
 M=/workspace/ComfyUI/models
 echo "=== klein fetch $(date -u +%FT%TZ) (worker pid $$) ===" >> "$LOG"
 # Wait for the image's own model downloads first: competing streams collapsed
-# the H3 pulls from ~290MB/s to single digits (2026-08-23). Cap 30 min.
-for _i in $(seq 1 90); do
-    pgrep -f "hf_download_manager|workflow_provisioner" >/dev/null 2>&1 || break
+# the H3 pulls from ~290MB/s to single digits (2026-08-23), and on 2026-09-01
+# the H3 text encoder never arrived at all. Process-name watching was fragile
+# (v4 renamed things and dropped /start.sh), so watch the models dir instead:
+# proceed only once its total size has stopped growing for two checks. Cap 45 min.
+PREV=-1; STILL=0
+for _i in $(seq 1 135); do
+    CUR=$(du -sb /workspace/ComfyUI/models 2>/dev/null | cut -f1)
+    CUR=${CUR:-0}
+    if [ "$CUR" = "$PREV" ]; then STILL=$((STILL+1)); else STILL=0; fi
+    [ "$STILL" -ge 2 ] && break
+    PREV=$CUR
     sleep 20
 done
 echo "=== klein fetch proceeding $(date -u +%FT%TZ) ===" >> "$LOG"
@@ -65,8 +76,16 @@ if [ ! -f "$M/vae/flux2-vae.safetensors" ]; then
                  "$M/vae/" || ok=0
 fi
 
+if [ "${DOWNLOAD_HYBRID:-true}" = "true" ] \
+   && [ ! -f "$M/diffusion_models/minimax_h3_hybrid_fl2va_ref2va_b15-49-int8.safetensors" ]; then
+    echo "--- hybrid H3 fl2va+ref2va (int8) ---" >> "$LOG"
+    hf download smhfacct/Minimax-H3-fl2va-ref2va-hybrid-models \
+        minimax_h3_hybrid_fl2va_ref2va_b15-49-int8.safetensors \
+        --local-dir "$M/diffusion_models" >> "$LOG" 2>&1 || ok=0
+fi
+
 if [ "$ok" = 1 ]; then
-    echo "=== klein fetch complete ===" >> "$LOG"
+    echo "=== extra model fetch complete ===" >> "$LOG"
 else
     echo "=== klein fetch FINISHED WITH FAILURES (gated BFL repo needs HF_TOKEN with licence accepted) ===" >> "$LOG"
 fi
