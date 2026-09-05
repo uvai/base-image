@@ -9,7 +9,7 @@ Headless MiniMax H3 chain studio: `mmx_studio.html` (browser, `file://`) drives 
 | `mmx_studio.html` | Mac, `~/.local/share/mmx/` | single file, no build |
 | `vgo` | Mac, `~/.local/bin/vgo` | v21: forwards 8190, `vgo studio`, runner pill in the dashboard |
 | `mock_comfy.py` | dev | ComfyUI API mock (`/object_info`, Display Any text, guide-aware rendering) |
-| `test_runner_mock.py`, `test_studio_ui.py` | dev | runner tests (37) and playwright UI tests (40) |
+| `test_runner_mock.py`, `test_studio_ui.py` | dev | runner tests (47) and playwright UI tests (46) |
 | `MiniMax - R2V - Auto Prompt v6 API v2.json` | Mac | the API-format template, **key stripped** (node 193 blank) |
 
 ## Install (Mac)
@@ -77,8 +77,27 @@ Runner env knobs: `MMX_NAS` (`user@host`, default parsed from `NAS_DEST`), `MMX_
 (`subjects=Subjects,videoref=VideoRef`), `MMX_LIBRARY_ROOT` (local directory instead of the NAS —
 used by the tests), `MMX_CACHE`.
 
-State surfaced to the page: `locked` (share not mounted → panes say so), `error` (unreachable /
-missing folder), `reachable`.
+**Mount-state verdict (v2.1).** `library_state()` asks the NAS the same question the vgo dashboard
+does: is there an ecryptfs entry for the share in the mount table (`synoshare --enc_mount` creates
+it, `--enc_unmount` removes it; the sudoers grant does not allow `synoshare --get`, so the mount
+table is the usable status signal). The command prints distinct tokens — `MMX_STATE=mounted|plain|locked`,
+`MMX_DIR=<kind>=ok|noperm|missing`, `MMX_WHO=<user>` — and the raw output is written to the runner
+log (`[nas] state check rc=… out=… err=…`). ssh failures (rc 255, timeouts) and missing tokens are
+reported as errors with the ssh text, never as "locked". Only successful listings are cached;
+a locked or error verdict is re-checked on every request, so Refresh after unlocking shows files
+immediately. (v2.0 had judged `"LOCKED" in "UNLOCKED"` → always locked.)
+
+State surfaced to the page: `locked` (true only for a genuinely unmounted share), `state`,
+`error` (unreachable / permission / missing folder, with the actual text), `reachable`.
+
+## Layout (v2.1)
+
+The Reference slots card is the left column's fixed header; only the libraries container below it
+scrolls, and it switches to a compact 9-across grid when the viewport is under 900 px high. A
+drag hovering within 56 px of a scroll container's top/bottom edge auto-scrolls it. A
+`position:sticky` card was tried first and rejected: Chromium scrolls a sticky element to its
+static position on scroll-into-view (keyboard focus, automated drags), which yanked the column
+mid-drag and cancelled the drop.
 
 ## Live check 2026-09-05 (RTX PRO 6000, hybrid int8 UNET, turbo LoRA, acc LoRA off — not on the box)
 
