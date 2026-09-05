@@ -90,6 +90,13 @@ immediately. (v2.0 had judged `"LOCKED" in "UNLOCKED"` → always locked.)
 State surfaced to the page: `locked` (true only for a genuinely unmounted share), `state`,
 `error` (unreachable / permission / missing folder, with the actual text), `reachable`.
 
+**File fetches use `ssh … cat`, not scp (v2.2).** The thumbnail endpoint returned 502 on the
+instance while listings worked: OpenSSH 9 `scp` speaks the SFTP protocol by default and DSM's
+SFTP server resolves absolute paths against its own root, so `/volume1/subgenula/...` came back
+as "No such file or directory" even though ssh could read the file (`scp -O` and `ssh cat` both
+work). The runner streams `cat` over the same ssh path it lists with; a missing file is reported
+as "no such file on the share".
+
 ## Layout (v2.1)
 
 The Reference slots card is the left column's fixed header; only the libraries container below it
