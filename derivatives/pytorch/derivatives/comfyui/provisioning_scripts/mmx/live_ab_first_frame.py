@@ -75,13 +75,14 @@ def main():
         open(mp4, "wb").write(api(a.runner, "/media?" + urllib.parse.urlencode({"f": vid["filename"], "sub": vid.get("subfolder", ""), "type": vid.get("type", "output")}), raw=True))
         f0 = os.path.join(a.out, name + "_f0.png"); f1 = os.path.join(a.out, name + "_1s.png")
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", mp4, "-frames:v", "1", f0], check=True)
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", "1", "-i", mp4, "-frames:v", "1", f1], check=True)
+        mid = max(0.1, min(1.0, a.seconds / 2))   # a frame part-way in (1 s, or the midpoint of shorter clips)
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-ss", str(mid), "-i", mp4, "-frames:v", "1", f1], check=True)
         subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", slot9_png, "-i", f0, "-i", f1, "-filter_complex",
                         "[0:v]scale=-2:320[a];[1:v]scale=-2:320[b];[2:v]scale=-2:320[c];[a][b][c]hstack=3", os.path.join(a.out, name + "_compare.png")], check=True)
-        results[mode] = {"psnr_f0_vs_slot9": psnr(f0, slot9_png), "psnr_f0_vs_slot1": psnr(f0, slot1_png), "psnr_1s_vs_slot9": psnr(f1, slot9_png),
+        results[mode] = {"psnr_f0_vs_slot9": psnr(f0, slot9_png), "psnr_f0_vs_slot1": psnr(f0, slot1_png), "psnr_mid_vs_slot9": psnr(f1, slot9_png),
                          "runner_psnr": s["continuity_psnr"], "guide_source": s["guide_source"], "refs": [r["tag"] for r in s["references"]],
                          "clause": s["clause"], "generated_prompt": s["generated_prompt"], "took_s": int(s["finished"] - s["started"])}
-        print(f"[{mode}] PSNR frame0 vs slot9 = {results[mode]['psnr_f0_vs_slot9']}  vs slot1 = {results[mode]['psnr_f0_vs_slot1']}  frame@1s vs slot9 = {results[mode]['psnr_1s_vs_slot9']}  (runner: {s['continuity_psnr']})", flush=True)
+        print(f"[{mode}] PSNR frame0 vs slot9 = {results[mode]['psnr_f0_vs_slot9']}  vs slot1 = {results[mode]['psnr_f0_vs_slot1']}  frame@mid vs slot9 = {results[mode]['psnr_mid_vs_slot9']}  (runner: {s['continuity_psnr']})", flush=True)
     json.dump(results, open(os.path.join(a.out, "results.json"), "w"), indent=1)
     print(json.dumps(results, indent=1)[:3000])
 
