@@ -151,6 +151,13 @@ body.short .card.slots .bd{padding:6px 10px}
 .tile .cap{display:flex;justify-content:space-between;align-items:center;padding:5px 8px;font-family:var(--mono);font-size:11px;gap:4px;flex-wrap:wrap}
 .tile .cap button{padding:0 6px;font-size:10.5px}
 .tile.final{flex-basis:240px;border-color:var(--teal)}
+.tile .vp{display:block;width:100%;border:0;border-top:1px solid var(--line);border-radius:0;background:rgba(110,168,254,.12);color:var(--blue);font-weight:600;padding:6px 8px;text-align:center}
+.tile .vp:hover{background:rgba(110,168,254,.22)}
+.lane .gen{border:1px solid var(--line);border-left:3px solid var(--blue);border-radius:5px;background:var(--bg);padding:4px 8px;font-size:11.5px;color:var(--dim);cursor:pointer;display:flex;gap:6px;align-items:baseline;min-width:0}
+.lane .gen b{color:var(--blue);font-weight:600;white-space:nowrap}
+.lane .gen .ex{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;font-family:var(--mono);font-size:11px}
+.lane .gen.open .ex{white-space:pre-wrap;overflow:visible;text-overflow:clip}
+.lane .gen .arrow{color:var(--dim);font-size:10px}
 .bar{height:6px;background:var(--bg);border-radius:3px;overflow:hidden;border:1px solid var(--line)}
 .bar i{display:block;height:100%;background:var(--amber);width:0;transition:width .4s}
 .bar.total i{background:var(--teal)}
@@ -252,9 +259,10 @@ pre.log{margin:0;font-family:var(--mono);font-size:11px;color:var(--dim);white-s
           <label>seed <input type="number" id="dSeed" placeholder="random"></label>
           <label>seed per segment <select id="dSeedMode"><option value="increment">increment</option><option value="fixed">fixed</option><option value="random">random</option></select></label>
           <label>fps <input type="number" id="dFps" value="24" min="8" max="60"></label>
-          <label>continuity <select id="dCont"><option value="guide">exact: guide node on previous last frame</option><option value="none">reference only (slot 9)</option></select></label>
+          <label>continuity <select id="dCont"><option value="guide">exact: guide node on frame 0 (slot 9 for segment 1, previous last frame after)</option><option value="none">reference only (slot 9)</option></select></label>
+          <label>segment 1 first frame <select id="dFirstMode"><option value="guide+ref">slot 9 as guide + reference</option><option value="guide">slot 9 as guide only</option></select></label>
           <label class="chk"><input type="checkbox" id="dConcat" checked> concatenate at the end</label>
-          <label class="chk"><input type="checkbox" id="dFirstClause" checked> add "&lt;Picture 9&gt; is the first frame" hint to prompts (ref2va prompt only)</label>
+          <label class="chk"><input type="checkbox" id="dFirstClause" checked> first-frame constraint: "&lt;Picture 9&gt; is the first frame" in the direction, and appended verbatim after the generated prompt when auto-prompt is on</label>
           <label class="chk"><input type="checkbox" id="dAuto"> auto-prompt via OpenRouter</label>
           <label>openrouter model <input id="dModel" value="google/gemini-2.5-flash" placeholder="model id"></label>
         </div>
@@ -596,7 +604,12 @@ function renderLanes(){
       el('button',{class:'small',title:'move up',onclick:()=>{ if(i>0){[lanes[i-1],lanes[i]]=[lanes[i],lanes[i-1]]; saveLanes(); renderLanes();} }},'↑'),
       el('button',{class:'small',title:'move down',onclick:()=>{ if(i<lanes.length-1){[lanes[i+1],lanes[i]]=[lanes[i],lanes[i+1]]; saveLanes(); renderLanes();} }},'↓'),
       el('button',{class:'small danger',onclick:()=>{ lanes.splice(i,1); saveLanes(); renderLanes(); }},'×'));
-    lane.append(left, el('div',{class:'body'}, tagButtons(ta, v=>{ ln.prompt=v; saveLanes(); }, i), ta, loraRow(ln.loras, ()=>{ saveLanes(); renderLanes(); }), row));
+    const seg = jobState?.segments?.[i];
+    const gen = seg?.generated_prompt ? el('div',{class:'gen',title:'click to expand · the prompt the LLM generated for this segment (double-click for the full view)',
+        onclick:e=>{ e.currentTarget.classList.toggle('open'); }, ondblclick:()=>showPrompt(i)},
+        el('b',{},'generated prompt'), el('span',{class:'ex'}, seg.generated_prompt), el('span',{class:'arrow'},'▾'),
+        el('button',{class:'small',onmousedown:e=>e.stopPropagation(),onclick:e=>{ e.stopPropagation(); showPrompt(i); }},'view')) : null;
+    lane.append(left, el('div',{class:'body'}, tagButtons(ta, v=>{ ln.prompt=v; saveLanes(); }, i), ta, gen, loraRow(ln.loras, ()=>{ saveLanes(); renderLanes(); }), row));
     lane.addEventListener('dragover', e=>{ if(dragPayload?.type==='prompt'){ e.preventDefault(); lane.classList.add('over'); } });
     lane.addEventListener('dragleave', ()=>lane.classList.remove('over'));
     lane.addEventListener('drop', e=>{ e.preventDefault(); lane.classList.remove('over'); if(dragPayload?.type!=='prompt') return; const pr=pool.find(x=>x.id===dragPayload.id); if(pr){ ln.prompt=pr.text; ln.loras = JSON.parse(JSON.stringify(pr.loras||[])); saveLanes(); renderLanes(); } });
@@ -608,7 +621,7 @@ $('btnAddSeg').onclick = ()=>{ lanes.push({prompt:'', seconds:+$('dSeconds').val
 
 // defaults
 for(const a of ASPECTS) $('dAspect').append(el('option',{value:a},a));
-const DEF_VALS = ['dSeconds','dAspect','dMp','dSeed','dSeedMode','dFps','dModel','dCont'], DEF_CHK = ['dConcat','dFirstClause','dAuto','dLock','dLockSeconds'];
+const DEF_VALS = ['dSeconds','dAspect','dMp','dSeed','dSeedMode','dFps','dModel','dCont','dFirstMode'], DEF_CHK = ['dConcat','dFirstClause','dAuto','dLock','dLockSeconds'];
 const defaults = LS.get('defaults', {});
 for(const id of DEF_VALS) { if(defaults[id]!=null) $(id).value=defaults[id]; $(id).addEventListener('change', ()=>{ saveDefaults(); if(locked()) renderLanes(); }); }
 for(const id of DEF_CHK) { if(defaults[id]!=null) $(id).checked=defaults[id]; $(id).addEventListener('change', ()=>{ saveDefaults(); if(id==='dAuto') health(); if(id==='dLock'||id==='dLockSeconds') renderLanes(); }); }
@@ -757,7 +770,7 @@ async function buildSpec(){
     name: ($('jobname').value.trim() || 'chain-'+new Date().toISOString().slice(0,16).replace(/[-:T]/g,'')).replace(/[^\w.-]+/g,'_'),
     template, slots: spec_slots, segments, concat: $('dConcat').checked,
     options:{ seed: $('dSeed').value? +$('dSeed').value : null, seed_mode:$('dSeedMode').value, fps:+$('dFps').value,
-              continuation: $('dCont').value, first_clause: clause,
+              continuation: $('dCont').value, first_frame_mode: $('dFirstMode').value, first_clause: clause,
               auto_prompt:{enabled:$('dAuto').checked, model:$('dModel').value.trim()} },
   };
 }
@@ -784,9 +797,9 @@ async function poll(){
   if(!jobId) return;
   try{
     const r = await fetch(runnerUrl()+'/job/'+jobId,{cache:'no-store'}); if(!r.ok){ if(r.status===404){ clearInterval(pollTimer); $('jstate').textContent='idle'; $('jstate').className='badge'; jobId=null; LS.set('job',null);} return; }
-    const j = await r.json(); const prevLast = JSON.stringify((jobState?.segments||[]).map(s=>s.lastframe+s.state)); jobState=j;
+    const j = await r.json(); const prevLast = JSON.stringify((jobState?.segments||[]).map(s=>s.lastframe+s.state+(s.generated_prompt||''))); jobState=j;
     renderRun(j);
-    if(JSON.stringify(j.segments.map(s=>s.lastframe+s.state))!==prevLast) renderLanes();
+    if(JSON.stringify(j.segments.map(s=>s.lastframe+s.state+(s.generated_prompt||'')))!==prevLast) renderLanes();
     if(['done','failed','cancelled'].includes(j.state)){ clearInterval(pollTimer); $('btnGo').disabled=false; $('btnCancel').disabled=true; }
     else { $('btnGo').disabled=true; $('btnCancel').disabled=false; }
   }catch(e){ $('jphase').textContent='(poll failed: '+e.message+')'; }
@@ -811,9 +824,11 @@ function renderRun(j){
     if(s.video){ const w=el('div',{class:'media'}); w.append(media); media=w; }
     const cap = el('div',{class:'cap'}, el('span',{},'segment '+(i+1)),
       el('span',{class:'badge '+s.state}, s.state + (s.finished&&s.started? ' '+fmtT(Math.floor(s.finished-s.started)) : '')));
-    if(s.continuity_psnr!=null) cap.append(el('span',{class:'badge',title:'PSNR between the previous last frame and this segment\'s first decoded frame'}, (s.guided?'exact ':'')+s.continuity_psnr+' dB'));
-    if(s.direction || s.generated_prompt) cap.append(el('button',{class:'small',onclick:()=>showPrompt(i)},'prompt'));
+    if(s.continuity_psnr!=null) cap.append(el('span',{class:'badge',title:(s.guide_source==='slot9'?'PSNR between the slot-9 image and':'PSNR between the previous last frame and')+' this segment\'s first decoded frame'}, (s.guided?'exact ':'')+s.continuity_psnr+' dB'));
+    if(s.guided) cap.append(el('span',{class:'badge',title:'frame 0 anchored by MiniMaxH3AddGuide'}, s.guide_source==='slot9'?'⚓ slot 9':'⚓ chained'));
     tile.append(media, cap);
+    if(s.generated_prompt) tile.append(el('button',{class:'vp',title:'show the prompt the LLM generated for this segment',onclick:()=>showPrompt(i)},'▶ view prompt'));
+    else if(s.direction) tile.append(el('button',{class:'vp',style:'color:var(--dim);background:none',onclick:()=>showPrompt(i)},'view direction'));
     T.append(tile);
   });
   if(j.final && j.final.filename){
@@ -831,7 +846,9 @@ function showPrompt(i){
   $('pmTitle').textContent = 'segment '+(i+1)+' prompt';
   $('pmDirection').textContent = s.direction || s.prompt || '';
   $('pmGenerated').textContent = s.generated_prompt || (s.state==='done' ? '(no generated prompt — auto-prompt was off, so the direction went through verbatim)' : '(not available yet)');
-  $('pmRefs').textContent = (s.references||[]).map(r=>r.slot_tag+'→'+r.tag+(r.soundtrack_tag?' (+'+r.soundtrack_tag+')':'')+' '+(r.label||r.file)).join('  ·  ');
+  $('pmRefs').textContent = (s.references||[]).map(r=>r.slot_tag+'→'+r.tag+(r.soundtrack_tag?' (+'+r.soundtrack_tag+')':'')+' '+(r.label||r.file)).join('  ·  ')
+    + (s.guided ? '   ·   frame 0 anchored by guide node (' + (s.guide_source==='slot9'?'slot 9 image':'previous last frame') + ')' : '')
+    + (s.clause ? '   ·   constraint appended after the generated text: "' + s.clause + '"' : '');
   $('pmSave').disabled = !s.generated_prompt;
   $('promptModal').classList.add('show');
 }

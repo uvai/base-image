@@ -36,6 +36,8 @@ def object_info(cls=None):
     if cls: return one(cls) if cls in MODELS else {}
     info = {}
     for c in MODELS: info.update(one(c))
+    info["StringConcatenate"] = {"input": {"required": {"string_a": ["STRING", {"multiline": True}], "string_b": ["STRING", {"multiline": True}], "delimiter": ["STRING", {"default": ""}]}},
+                                 "output": ["STRING"], "name": "StringConcatenate", "display_name": "Concatenate"}
     info["MiniMaxH3AddGuide"] = {"input": {"required": {"positive": ["CONDITIONING"], "latent": ["LATENT"], "frame_idx": ["INT", {"default": 0}]},
                                           "optional": {"vae": ["VAE"], "audio_vae": ["VAE"], "image": ["IMAGE"], "audio": ["AUDIO"]}},
                                 "output": ["CONDITIONING"], "name": "MiniMaxH3AddGuide", "display_name": "Add Guide for MiniMax H3"}
@@ -84,6 +86,11 @@ def finish(pid):
         direction = p["185"]["inputs"].get("direction", "")
         provider = p["185"]["inputs"].get("prompt_provider", "none")
         text = direction if provider == "none" else f"[mock {provider} rewrite] " + direction
+        # follow the Display Any node's source: a StringConcatenate between 185 and 186 appends its string_b
+        src = p.get("186", {}).get("inputs", {}).get("source")
+        if isinstance(src, list) and p.get(str(src[0]), {}).get("class_type") == "StringConcatenate":
+            c = p[str(src[0])]["inputs"]
+            text = text + c.get("delimiter", "") + str(c.get("string_b", ""))
         HISTORY[pid] = {"status": {"status_str": "success", "completed": True, "messages": []},
                         "outputs": {"119": {"gifs": [{"filename": vname + "_00001.mp4", "subfolder": sub, "type": "output", "format": "video/h264-mp4"}]},
                                     "195": {"images": [{"filename": lname + "_00001_.png", "subfolder": sub, "type": "output"}]},

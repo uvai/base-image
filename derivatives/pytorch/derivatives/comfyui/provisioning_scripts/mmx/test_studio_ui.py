@@ -179,6 +179,9 @@ def main():
             check("lock disables lane aspect/mp/seconds controls", page.evaluate("[...document.querySelectorAll('.lane .row select, .lane .row input[type=number]')].filter(e=>e.disabled).length") == 6)
             check("lock shows on lanes", page.locator(".lane .badge.lock").count() == 2)
 
+            page.check("#dAuto")   # auto-prompt on: the mock rewrites the direction, the runner appends the constraint
+            page.check("#dFirstClause")
+            page.select_option("#dFirstMode", "guide+ref")
             # missing LoRA -> picker modal
             page.evaluate("window.mmx.setLane(1, {loras:[{name:'Gone.safetensors', strength:0.6}]})")
             page.fill("#jobname", "uitest")
@@ -196,23 +199,32 @@ def main():
             sub = json.load(open(SUBMITTED))
             d0, d1 = sub[-2]["185"]["inputs"], sub[-1]["185"]["inputs"]
             check("F1 remap seg1: <Picture 3>…<Picture 9> -> <Picture 3>…<Picture 4> (slots 1,2,3,9 occupied; 3 images before slot 9)",
-                  d0["direction"] == "<Picture 3> walks in and looks around <Picture 4>", d0["direction"])
-            check("F1 remap seg2 with video + chained frame", d1["direction"] == "<Picture 1> and <Video 1> dance. <Picture 4> starts it.", d1["direction"])
+                  d0["direction"] == "<Picture 3> walks in and looks around <Picture 4>. <Picture 4> is the absolute first frame of the video.", d0["direction"])
+            check("F1 remap seg2 with video + chained frame", d1["direction"] == "<Picture 1> and <Video 1> dance. <Picture 4> starts it. <Picture 4> is the absolute first frame of the video.", d1["direction"])
             refs1 = json.loads(d1["references_json"])["references"]
             check("seg2 references: 4 images (slot 9 = chained) + 1 video without soundtrack", [r["kind"] for r in refs1] == ["image"] * 4 + ["video"] and refs1[4]["use_soundtrack"] is False and refs1[3]["file"].endswith("seg01_last.png"), json.dumps(refs1))
             check("F6 lock applied: both segments 9:16 at defaults", sub[-1]["184"]["inputs"]["width"] < sub[-1]["184"]["inputs"]["height"] and sub[-2]["132"]["inputs"]["value"] == 1.0)
             check("F7 lora_2 on segment 2 only", "lora_2" not in sub[-2]["137"]["inputs"] and sub[-1]["137"]["inputs"]["lora_2"]["lora"] == "side_fuck_h3_000000750.safetensors")
-            check("F2 guide injected for segment 2", any(n.get("class_type") == "MiniMaxH3AddGuide" for n in sub[-1].values()))
+            check("F2 guide injected for segment 2 (chained) and segment 1 (slot 9)", any(n.get("class_type") == "MiniMaxH3AddGuide" for n in sub[-1].values()) and any(n.get("class_type") == "MiniMaxH3AddGuide" for n in sub[-2].values()))
+            check("first_frame_mode persisted in defaults", page.evaluate("JSON.parse(localStorage.getItem('mmx.defaults')).dFirstMode") == "guide+ref")
             check("tiles rendered with videos + final", page.locator(".tile video").count() == 3 and page.locator(".tile.final").count() == 1)
             check("continuity PSNR badge on segment 2", "dB" in page.text_content(".tile:nth-child(2) .cap"))
 
-            # F5 prompt modal
-            page.click(".tile:nth-child(1) .cap button")
+            # F5 prompt visibility: unmissable button on every completed tile + collapsed line under the lane
+            btns = page.eval_on_selector_all(".tile button.vp", "els => els.map(e => e.textContent)")
+            check("every completed segment tile has a 'view prompt' button", btns == ["▶ view prompt", "▶ view prompt"], str(btns))
+            gens = page.eval_on_selector_all(".lane .gen", "els => els.map(e => e.querySelector('.ex').textContent.slice(0, 26))")
+            check("collapsed 'generated prompt' line under each lane's textarea", gens == ["[mock openrouter rewrite] "] * 2, str(gens))
+            page.click(".lane:nth-child(1) .gen"); check("lane line expands on click", page.evaluate("document.querySelector('.lane:nth-child(1) .gen').classList.contains('open')"))
+            page.click(".tile:nth-child(1) button.vp")
             page.wait_for_function("document.getElementById('promptModal').classList.contains('show')")
-            check("prompt modal shows direction + generated prompt", page.text_content("#pmDirection") == d0["direction"] and page.text_content("#pmGenerated") == d0["direction"])
+            gen = page.text_content("#pmGenerated")
+            check("modal shows the direction and the generated prompt with the appended first-frame constraint",
+                  page.text_content("#pmDirection") == d0["direction"] and gen.startswith("[mock openrouter rewrite] " + d0["direction"]) and "video opens exactly on" in gen, gen[-120:])
+            check("modal names the guide source and the appended constraint", "slot 9 image" in page.text_content("#pmRefs") and "constraint appended" in page.text_content("#pmRefs"))
             n0 = page.evaluate("window.mmx.pool.length")
             page.click("#pmSave")
-            check("save generated as pool item", page.evaluate("window.mmx.pool.length") == n0 + 1 and page.evaluate("window.mmx.pool[0].text") == d0["direction"])
+            check("save generated as pool item", page.evaluate("window.mmx.pool.length") == n0 + 1 and page.evaluate("window.mmx.pool[0].text") == gen)
             page.click("#pmClose")
 
             # F8 refresh reports changes

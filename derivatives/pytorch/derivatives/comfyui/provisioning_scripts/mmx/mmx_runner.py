@@ -42,7 +42,12 @@ Spec v2 (v1 specs with refs/first_frame are upgraded on arrival):
     "concat": true,
     "options": {"seed", "seed_mode", "fps", "aspect", "megapixels", "seconds",
                 "auto_prompt": {"enabled", "model", "reasoning"},
-                "continuation": "guide" | "none",     # guide (default): inject MiniMaxH3AddGuide for segments 2+
+                "continuation": "guide" | "none",     # guide (default): MiniMaxH3AddGuide at frame 0 — segments 2+ on the
+                                                      #   previous last frame; segment 1 on the slot-9 image when present
+                "first_frame_mode": "guide+ref" | "guide",   # segment 1: keep slot 9 in the references too (default) or
+                                                      #   use it only as the guide (then <Picture 9> reads "the first frame")
+                "first_clause": true,                 # append the first-frame constraint verbatim AFTER the generated
+                                                      #   prompt (StringConcatenate between node 185 and its consumers)
                 "continuation_unet": "<file>"}        # optional UNET swap for segments 2+
   }
   SRC = {"kind": "local", "name": "x.png", "data": "<base64>"}
@@ -51,7 +56,7 @@ Spec v2 (v1 specs with refs/first_frame are upgraded on arrival):
 import argparse, base64, copy, hashlib, http.server, json, mimetypes, os, random, re, shutil
 import subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request, urllib.error, uuid
 
-VERSION = "2.2"
+VERSION = "2.3"
 COMFY = "http://127.0.0.1:8188"
 OUTPUT_CANDIDATES = ["/workspace/ComfyUI/output", "/ComfyUI/output", "/root/ComfyUI/output"]
 JOBS = {}
@@ -71,9 +76,12 @@ DEFAULT_MAP = {
     "display": "186",       # Display Any (rgthree) showing the generated prompt
     "loras": "137",         # Power Lora Loader (rgthree): lora_1 = acc LoRA (never touched)
     "unet": "135",          # UNETLoader
-    "guide": "900",         # injected MiniMaxH3AddGuide (continuation)
+    "guide": "900",         # injected MiniMaxH3AddGuide (continuation / first frame)
     "guide_image": "901",   # injected LoadImage feeding the guide
+    "concat": "903",        # injected StringConcatenate: generated prompt + first-frame constraint
 }
+FIRST_FRAME_MODES = ("guide+ref", "guide")   # segment 1 with an image in slot 9 and continuation "guide"
+
 MAX_SLOTS = {"images": 9, "videos": 3, "audios": 3}
 FIRST_SLOT = 9
 TAG_RE = re.compile(r"<\s*(picture|video|audio)\s*(\d+)\s*>", re.I)
@@ -513,7 +521,7 @@ def new_job(spec):
     for i, s in enumerate(spec.get("segments", [])):
         job["segments"].append({"index": i, "state": "pending", "prompt": s.get("prompt", ""),
                                 "direction": None, "generated_prompt": None, "references": None,
-                                "loras": s.get("loras") or [], "continuity_psnr": None, "guided": False,
+                                "loras": s.get("loras") or [], "continuity_psnr": None, "guided": False, "guide_source": None, "clause": None,
                                 "seconds": s.get("seconds"), "aspect": s.get("aspect"),
                                 "seed": None, "prompt_id": None, "video": None, "lastframe": None,
                                 "started": None, "finished": None, "error": None})
@@ -554,14 +562,18 @@ def build_references(images, videos, audios):
                         "label": audios[slot].get("label", "")})
     return refs, tagmap, listing
 
-def remap_prompt(prompt, tagmap, seg_label="segment"):
+def remap_prompt(prompt, tagmap, seg_label="segment", aliases=None):
     """Rewrite UI-slot tags to the node's compacted ordinals. {{first}} = slot 9.
-    Raises ValueError naming the first tag that points at an empty slot."""
+    aliases: {(kind, slot): "plain text"} for slots that are not references in this segment
+    (slot 9 when it is only the guide). Raises ValueError naming the first tag that points
+    at an empty slot."""
     text = re.sub(r"\{\{\s*first\s*\}\}", f"<Picture {FIRST_SLOT}>", prompt, flags=re.I)
     missing = []
     def sub(m):
         kind, n = m.group(1).lower(), int(m.group(2))
         t = tagmap.get((kind, n))
+        if t is None and aliases and (kind, n) in aliases:
+            return aliases[(kind, n)]
         if t is None:
             missing.append(f"<{TAG_WORD[kind]} {n}>")
             return m.group(0)
@@ -586,19 +598,65 @@ def plan_segments(spec, uploaded=None):
         return out
     images, videos, audios = entries("images", "img"), entries("videos", "vid"), entries("audios", "aud")
     plans, errors = [], []
+    opts = spec.get("options") or {}
+    guide_on = opts.get("continuation", "guide") != "none"
     for i, seg in enumerate(spec.get("segments") or []):
         imgs = dict(images)
         if i > 0:
             imgs[FIRST_SLOT] = {"file": (uploaded or {}).get(("chain", i)) or f"seg{i:02d}_last.png",
                                 "label": f"last frame of segment {i}", "use_soundtrack": False}
+        imgs, aliases, guide_source = first_frame_plan(imgs, i, opts)
         refs, tagmap, listing = build_references(imgs, videos, audios)
         try:
-            direction = remap_prompt(seg.get("prompt", ""), tagmap, f"segment {i+1}")
+            direction = remap_prompt(seg.get("prompt", ""), tagmap, f"segment {i+1}", aliases)
         except ValueError as e:
             errors.append(str(e)); direction = None
         plans.append({"index": i, "prompt": direction, "references": refs, "listing": listing,
-                      "guided": i > 0 and (spec.get("options") or {}).get("continuation", "guide") != "none"})
+                      "guided": guide_on and guide_source is not None, "guide_source": guide_source if guide_on else None})
     return plans, errors
+
+
+def first_frame_plan(images, seg_index, opts):
+    """What anchors frame 0 for this segment. Returns (images for the references, tag aliases,
+    guide_source) where guide_source is "chain" (segments 2+: previous last frame, also kept in
+    slot 9), "slot9" (segment 1 with an image in slot 9) or None."""
+    if opts.get("continuation", "guide") == "none":
+        return images, {}, None
+    if seg_index > 0:
+        return images, {}, "chain" if FIRST_SLOT in images else None
+    if FIRST_SLOT not in images:
+        return images, {}, None
+    mode = opts.get("first_frame_mode") or FIRST_FRAME_MODES[0]
+    if mode not in FIRST_FRAME_MODES:
+        raise ValueError(f"first_frame_mode must be one of {FIRST_FRAME_MODES}")
+    if mode == "guide":
+        imgs = {k: v for k, v in images.items() if k != FIRST_SLOT}
+        return imgs, {("picture", FIRST_SLOT): "the first frame"}, "slot9"
+    return images, {}, "slot9"
+
+
+def first_frame_clause(tagmap, guide_source):
+    """The constraint appended verbatim after the generated prompt (survives auto-prompt)."""
+    tag9 = tagmap.get(("picture", FIRST_SLOT))
+    if tag9:
+        return f"The video opens exactly on {tag9}: frame 0 is {tag9} itself, same framing, same subject, same identity, no cut or re-framing before motion begins."
+    return "The video opens exactly on the provided first frame (a hard keyframe): keep its framing, subject and identity from frame 0, no cut or re-framing before motion begins."
+
+
+def inject_clause(p, m, clause):
+    """StringConcatenate(generated prompt, clause) wired into every consumer of the RefPack's prompt
+    output (the reference node's prompt and the Display Any node), so the appended constraint is
+    what the model sees and what the studio shows."""
+    rp = m["refpack"]
+    cid = m["concat"]
+    while cid in p: cid = str(int(cid) + 2)
+    for nid, node in p.items():
+        for k, v in list(node.get("inputs", {}).items()):
+            if isinstance(v, list) and len(v) == 2 and str(v[0]) == rp and v[1] == 18:
+                node["inputs"][k] = [cid, 0]
+    p[cid] = {"class_type": "StringConcatenate", "_meta": {"title": "mmx prompt + first-frame constraint"},
+              "inputs": {"string_a": [rp, 18], "string_b": clause, "delimiter": " "}}
+    return cid
 
 
 # ── template patching ────────────────────────────────────────────────────────
@@ -638,9 +696,11 @@ def build_prompt(template, mapping, seg, images, videos, audios, seed, opts, pre
             raise RuntimeError(f"template has no node {m[need]} ({need})")
     rp, r2v = p[m["refpack"]]["inputs"], p[m["ref2video"]]["inputs"]
 
-    refs, tagmap, listing = build_references(images, videos, audios)
+    guide_file = first_file if seg_index > 0 else (images.get(FIRST_SLOT) or {}).get("file")
+    ref_images, aliases, guide_source = first_frame_plan(images, seg_index, opts)
+    refs, tagmap, listing = build_references(ref_images, videos, audios)
     rp["references_json"] = json.dumps({"references": refs})
-    direction = remap_prompt(seg["prompt"], tagmap, f"segment {seg_index+1}")
+    direction = remap_prompt(seg["prompt"], tagmap, f"segment {seg_index+1}", aliases)
     rp["direction"] = direction
 
     # prompt provider: passthrough by default, openrouter opt-in. The key comes from the
@@ -678,11 +738,17 @@ def build_prompt(template, mapping, seg, images, videos, audios, seed, opts, pre
         for j, l in enumerate(loras, start=2):
             ln["inputs"][f"lora_{j}"] = {"on": True, "lora": l["name"], "strength": float(l.get("strength", 0.85))}
 
-    # continuation (segments 2+): hard first-frame guide, optional UNET swap
+    # hard first-frame guide: segments 2+ on the previous last frame (unchanged), segment 1 on
+    # the slot-9 image when there is one; a supplied templates.next is used verbatim for 2+
     guided = False
-    if seg_index > 0 and first_file and opts.get("continuation", "guide") == "guide" and not opts.get("_has_next_template"):
-        inject_guide(p, m, first_file)
+    if guide_source and guide_file and not (seg_index > 0 and opts.get("_has_next_template")):
+        inject_guide(p, m, guide_file)
         guided = True
+    # the first-frame constraint survives auto-prompt: appended verbatim after the generated text
+    clause = None
+    if opts.get("first_clause", True) and guided and (opts.get("auto_prompt") or {}).get("enabled"):
+        clause = first_frame_clause(tagmap, guide_source)
+        inject_clause(p, m, clause)
     if seg_index > 0 and opts.get("continuation_unet") and m["unet"] in p:
         p[m["unet"]]["inputs"]["unet_name"] = opts["continuation_unet"]
 
@@ -690,7 +756,8 @@ def build_prompt(template, mapping, seg, images, videos, audios, seed, opts, pre
     p[m["video"]]["inputs"]["filename_prefix"] = prefix
     if opts.get("fps"): p[m["video"]]["inputs"]["frame_rate"] = int(opts["fps"])
     p[m["lastframe"]]["inputs"]["filename_prefix"] = prefix + "_last"
-    return p, {"size": (w, h), "direction": direction, "listing": listing, "guided": guided, "loras": loras}
+    return p, {"size": (w, h), "direction": direction, "listing": listing, "guided": guided,
+               "guide_source": guide_source if guided else None, "clause": clause, "loras": loras}
 
 
 # ── waiting on ComfyUI ───────────────────────────────────────────────────────
@@ -817,6 +884,10 @@ def upload_slots(job, spec, tables):
             stored = comfy_upload(name, data)
             out[kind][slot] = {"file": stored, "label": src.get("name") or src.get("path") or "",
                                "use_soundtrack": bool(e.get("use_soundtrack", True))}
+            if kind == "images" and slot == FIRST_SLOT:
+                lp = os.path.join(cache_dir(), "jobs", f"{job['id']}_slot9{ext or '.png'}")
+                os.makedirs(os.path.dirname(lp), exist_ok=True); open(lp, "wb").write(data)
+                out[kind][slot]["local"] = lp
     return out
 
 def psnr(ref_png, video_path):
@@ -890,7 +961,8 @@ def run_job(job, spec):
             template = t_first if i == 0 else (t_next or t_first)
             prompt, info = build_prompt(template, m, seg, images, up["videos"], up["audios"], seed, opts, prefix,
                                         i, chain_file, key)
-            S.update(direction=info["direction"], references=info["listing"], guided=info["guided"])
+            S.update(direction=info["direction"], references=info["listing"], guided=info["guided"],
+                     guide_source=info["guide_source"], clause=info["clause"])
             res = comfy("/prompt", data={"prompt": prompt, "client_id": f"mmx{job['id'][-4:]}"}, timeout=60)
             if res.get("node_errors"):
                 raise RuntimeError(summarize_node_errors(res, prompt) +
@@ -900,7 +972,7 @@ def run_job(job, spec):
             S["prompt_id"] = res["prompt_id"]
             w, h = info["size"]
             log(job, f"seg {i+1}/{len(segs)} submitted {w}x{h} {seg.get('seconds')}s seed={seed} "
-                     f"refs={len(info['listing'])}{' guided' if info['guided'] else ''}"
+                     f"refs={len(info['listing'])}{' guided(' + info['guide_source'] + ')' if info['guided'] else ''}{' +clause' if info['clause'] else ''}"
                      f"{' loras=' + ','.join(l['name'] for l in info['loras']) if info['loras'] else ''} id={res['prompt_id'][:8]}")
             entry = wait_for(job, res["prompt_id"], S)
             vid, last, text = pick_outputs(entry, m["video"], m["lastframe"], m["display"])
@@ -910,7 +982,16 @@ def run_job(job, spec):
             if not last: raise RuntimeError(f"segment {i+1} finished but produced no last-frame image")
             S.update(video=vid, lastframe=last, generated_prompt=text, state="done", finished=time.time())
             log(job, f"seg {i+1} done: {vid.get('filename')} ({int(time.time()-S['started'])}s)")
-            # continuity measurement: previous last frame vs this segment's first decoded frame
+            # continuity measurement: the frame-0 anchor (slot-9 image for segment 1, previous last
+            # frame for 2+) vs this segment's first decoded frame
+            if i == 0 and info["guided"] and (up["images"].get(FIRST_SLOT) or {}).get("local"):
+                try:
+                    vp = os.path.join(work, "seg01.mp4")
+                    open(vp, "wb").write(comfy_bytes(view_url(vid["filename"], vid.get("subfolder", ""), vid.get("type", "output")), timeout=600))
+                    S["continuity_psnr"] = psnr(up["images"][FIRST_SLOT]["local"], vp)
+                    log(job, f"seg 1 first-frame vs slot 9 PSNR: {S['continuity_psnr'] if S['continuity_psnr'] is not None else 'n/a'} dB")
+                except Exception as e:
+                    log(job, f"psnr check skipped: {e}")
             if i > 0 and chain_png:
                 try:
                     vp = os.path.join(work, f"seg{i+1:02d}.mp4")
@@ -1027,6 +1108,8 @@ def check_spec(spec):
     if not isinstance(spec["template"], dict) or not spec["template"]:
         raise ValueError("template must be a non-empty API-format graph")
     if not spec["segments"]: raise ValueError("no segments")
+    mode = (spec.get("options") or {}).get("first_frame_mode")
+    if mode and mode not in FIRST_FRAME_MODES: raise ValueError(f"first_frame_mode must be one of {FIRST_FRAME_MODES}")
     slot_table(spec)
 
 class H(http.server.BaseHTTPRequestHandler):
@@ -1111,7 +1194,7 @@ class H(http.server.BaseHTTPRequestHandler):
             if u.path == "/validate":
                 return self._json({"ok": not errors, "errors": errors, "spec_version": spec["spec_version"],
                                    "segments": [{"index": p["index"], "prompt": p["prompt"], "references": p["listing"],
-                                                 "guided": p["guided"]} for p in plans]})
+                                                 "guided": p["guided"], "guide_source": p["guide_source"]} for p in plans]})
             if errors:
                 return self._json({"error": "; ".join(errors)}, 400)
             job = new_job(spec)

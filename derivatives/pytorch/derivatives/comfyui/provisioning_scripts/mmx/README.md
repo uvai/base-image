@@ -9,7 +9,8 @@ Headless MiniMax H3 chain studio: `mmx_studio.html` (browser, `file://`) drives 
 | `mmx_studio.html` | Mac, `~/.local/share/mmx/` | single file, no build |
 | `vgo` | Mac, `~/.local/bin/vgo` | v21: forwards 8190, `vgo studio`, runner pill in the dashboard |
 | `mock_comfy.py` | dev | ComfyUI API mock (`/object_info`, Display Any text, guide-aware rendering) |
-| `test_runner_mock.py`, `test_studio_ui.py` | dev | runner tests (47) and playwright UI tests (46) |
+| `test_runner_mock.py`, `test_studio_ui.py` | dev | runner tests (59) and playwright UI tests (51) |
+| `live_ab_first_frame.py` | dev | segment-1 first-frame A/B (guide+ref vs guide) against a live runner |
 | `MiniMax - R2V - Auto Prompt v6 API v2.json` | Mac | the API-format template, **key stripped** (node 193 blank) |
 
 ## Install (Mac)
@@ -53,6 +54,18 @@ See the docstring at the top of `mmx_runner.py`. Highlights:
   overrides that (used verbatim, no injection). `options.continuation_unet` swaps the UNET for
   segments 2+. The runner measures PSNR between the previous last frame and the next segment's
   first decoded frame (`segments[i].continuity_psnr`, dB; 99 = identical).
+- Segment 1 (v2.3): when slot 9 holds an image and continuation is "guide", the same guide
+  injection runs with the slot-9 image as the frame-0 keyframe, so the video opens on picture 9.
+  `options.first_frame_mode`: `"guide+ref"` (default) keeps slot 9 in the references too;
+  `"guide"` uses it only as the guide, in which case `<Picture 9>` / `{{first}}` in the direction
+  become the words "the first frame". `segments[0].continuity_psnr` = PSNR(frame 0, slot-9 image).
+  Job state carries `guide_source` (`slot9` | `chain` | null).
+- The first-frame constraint survives auto-prompt (v2.3): with `options.first_clause` (default
+  true) and auto-prompt on, a core `StringConcatenate` node is inserted between the RefPack's
+  prompt output (185:18) and both consumers (184.prompt and the Display Any node 186), appending
+  the constraint verbatim after the LLM text. `segments[i].clause` holds it and
+  `generated_prompt` ends with it. The node's `system_prompt` input was not used: it *replaces*
+  the packaged 22 KB writer prompt rather than adding to it.
 - `segments[].loras` → `lora_2`, `lora_3`… on node 137; `lora_1` and node 158 are never touched.
   Names are validated against `/object_info` before upload and fail with the exact missing name.
 - `segments[i].generated_prompt` = `history[id].outputs["186"].text[0]` (rgthree Display Any
@@ -96,6 +109,14 @@ SFTP server resolves absolute paths against its own root, so `/volume1/subgenula
 as "No such file or directory" even though ssh could read the file (`scp -O` and `ssh cat` both
 work). The runner streams `cat` over the same ssh path it lists with; a missing file is reported
 as "no such file on the share".
+
+## Generated-prompt visibility (v2.3)
+
+Every completed segment tile has a full-width "▶ view prompt" button (or "view direction" when
+auto-prompt was off), and after a segment runs a collapsed "generated prompt" line appears under
+its lane's textarea (click to expand, "view" opens the modal). The modal shows direction and
+generated text side by side, the reference tag mapping, the guide source and the appended
+constraint.
 
 ## Layout (v2.1)
 

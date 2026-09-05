@@ -122,7 +122,12 @@ def main():
         guide = [n for n in sub[-1].values() if n.get("class_type") == "MiniMaxH3AddGuide"]
         check("F2: seg2 has an injected MiniMaxH3AddGuide at frame 0", len(guide) == 1 and guide[0]["inputs"]["frame_idx"] == 0 and guide[0]["inputs"]["positive"] == ["184", 0], json.dumps(guide)[:300])
         check("F2: BasicGuider rewired to the guide node", sub[-1]["149"]["inputs"]["conditioning"] == [DEFAULT_GUIDE_ID(sub[-1]), 0], json.dumps(sub[-1]["149"]))
-        check("F2: seg1 has no guide node", not any(n.get("class_type") == "MiniMaxH3AddGuide" for n in sub[-2].values()))
+        g1 = [n for n in sub[-2].values() if n.get("class_type") == "MiniMaxH3AddGuide"]
+        img1 = sub[-2][str(g1[0]["inputs"]["image"][0])]["inputs"]["image"] if g1 else None
+        check("F2/seg1: guide node anchored on the slot-9 image (guide+ref default)", len(g1) == 1 and img1 and img1.endswith("img9.png"), json.dumps(g1)[:200])
+        check("F2/seg1: slot 9 kept in references (guide+ref)", refs0[2]["file"].endswith("img9.png") and len(refs0) == 3)
+        check("F2/seg1: PSNR vs slot-9 image measured > 40 dB on the mock", j["segments"][0]["continuity_psnr"] is not None and j["segments"][0]["continuity_psnr"] > 40 and j["segments"][0]["guide_source"] == "slot9", str(j["segments"][0]["continuity_psnr"]))
+        check("no constraint node when auto-prompt is off", not any(n.get("class_type") == "StringConcatenate" for n in sub[-2].values()) and sub[-2]["184"]["inputs"]["prompt"] == ["185", 18])
         p = j["segments"][1]["continuity_psnr"]
         check("F2: continuity PSNR measured and > 40 dB on the mock", p is not None and p > 40, f"psnr={p}")
         check("F5: generated_prompt captured from node 186", j["segments"][0]["generated_prompt"] == d0["direction"], str(j["segments"][0]["generated_prompt"]))
@@ -133,7 +138,7 @@ def main():
         off = json.loads(json.dumps(base)); off["name"] = "t_noguide"; off["options"]["continuation"] = "none"
         st, r = api("/job", off); j = wait_job(r["job"])
         sub = json.load(open(SUBMITTED))
-        check("continuation none: no guide injected", j["state"] == "done" and not any(n.get("class_type") == "MiniMaxH3AddGuide" for n in sub[-1].values()), j.get("error") or "")
+        check("continuation none: no guide injected (seg 1 nor seg 2)", j["state"] == "done" and not any(n.get("class_type") == "MiniMaxH3AddGuide" for n in list(sub[-1].values()) + list(sub[-2].values())), j.get("error") or "")
         check("continuation none: PSNR low (segments differ)", j["segments"][1]["continuity_psnr"] is not None and j["segments"][1]["continuity_psnr"] < 30, str(j["segments"][1]["continuity_psnr"]))
 
         # templates.next override -> used verbatim for seg 2, no injection
@@ -167,6 +172,41 @@ def main():
               and lor["lora_3"]["lora"] == "side_fuck_h3_000000750.safetensors" and lor["lora_3"]["strength"] == 0.85, json.dumps(lor))
         check("F7: turbo LoRA node 158 untouched", sub[-1]["158"]["inputs"]["lora_name"] == template["158"]["inputs"]["lora_name"])
         check("F5: generated prompt shows the provider rewrite", (j["segments"][0]["generated_prompt"] or "").startswith("[mock openrouter rewrite]"), str(j["segments"][0]["generated_prompt"]))
+
+        # segment-1 first-frame modes + the appended constraint (auto-prompt on)
+        ffm = json.loads(json.dumps(base)); ffm["name"] = "t_ffmode"; ffm["options"]["auto_prompt"] = {"enabled": True, "model": "x"}; ffm["options"]["first_frame_mode"] = "guide"
+        st, v = api("/validate", ffm)
+        check("validate: guide-only mode aliases <Picture 9> to 'the first frame' and reports guide_source", v["ok"] and v["segments"][0]["prompt"] == "<Picture 2> walks in. the first frame is the first frame. the first frame again."
+              and v["segments"][0]["guide_source"] == "slot9" and v["segments"][1]["guide_source"] == "chain" and v["segments"][1]["prompt"] == "<Picture 1> and <Picture 3> continue.", json.dumps(v)[:400])
+        st, r = api("/job", ffm); j = wait_job(r["job"])
+        sub = json.load(open(SUBMITTED)); s1, s2 = sub[-2], sub[-1]
+        refs1 = json.loads(s1["185"]["inputs"]["references_json"])["references"]
+        g1 = [n for n in s1.values() if n.get("class_type") == "MiniMaxH3AddGuide"]
+        check("guide-only: slot 9 removed from seg-1 references, still the guide", j["state"] == "done" and len(refs1) == 2 and not any(r["file"].endswith("img9.png") for r in refs1)
+              and len(g1) == 1 and s1[str(g1[0]["inputs"]["image"][0])]["inputs"]["image"].endswith("img9.png"), (j.get("error") or "") + json.dumps(refs1))
+        cc1 = [(nid, n) for nid, n in s1.items() if n.get("class_type") == "StringConcatenate"]
+        check("constraint node appended after the generated text and wired into 184.prompt and 186.source",
+              len(cc1) == 1 and cc1[0][1]["inputs"]["string_a"] == ["185", 18] and "first frame" in cc1[0][1]["inputs"]["string_b"]
+              and s1["184"]["inputs"]["prompt"] == [cc1[0][0], 0] and s1["186"]["inputs"]["source"] == [cc1[0][0], 0], json.dumps(cc1)[:300])
+        check("guide-only clause speaks of the provided first frame (no <Picture N>)", "provided first frame" in cc1[0][1]["inputs"]["string_b"] and j["segments"][0]["clause"] == cc1[0][1]["inputs"]["string_b"])
+        check("generated_prompt captured includes the appended constraint", (j["segments"][0]["generated_prompt"] or "").endswith(cc1[0][1]["inputs"]["string_b"]), str(j["segments"][0]["generated_prompt"])[-120:])
+        refs2 = json.loads(s2["185"]["inputs"]["references_json"])["references"]
+        g2 = [n for n in s2.values() if n.get("class_type") == "MiniMaxH3AddGuide"]
+        cc2 = [n for n in s2.values() if n.get("class_type") == "StringConcatenate"]
+        check("segment 2 unchanged: chained last frame in slot 9 AND as the guide; clause names <Picture 3>",
+              len(refs2) == 3 and refs2[2]["file"].endswith("seg01_last.png") and len(g2) == 1 and s2[str(g2[0]["inputs"]["image"][0])]["inputs"]["image"].endswith("seg01_last.png")
+              and len(cc2) == 1 and "<Picture 3>" in cc2[0]["inputs"]["string_b"] and j["segments"][1]["guide_source"] == "chain", json.dumps(refs2) + json.dumps(cc2)[:200])
+        ffr = json.loads(json.dumps(ffm)); ffr["name"] = "t_ffref"; ffr["options"]["first_frame_mode"] = "guide+ref"
+        st, r = api("/job", ffr); j = wait_job(r["job"]); s1 = json.load(open(SUBMITTED))[-2]
+        cc = [n for n in s1.values() if n.get("class_type") == "StringConcatenate"][0]
+        check("guide+ref: clause names the compacted slot-9 tag", j["state"] == "done" and "<Picture 3>" in cc["inputs"]["string_b"] and len(json.loads(s1["185"]["inputs"]["references_json"])["references"]) == 3, cc["inputs"]["string_b"])
+        bad_mode = json.loads(json.dumps(ffm)); bad_mode["options"]["first_frame_mode"] = "nope"
+        st, r = api("/job", bad_mode)
+        check("invalid first_frame_mode rejected", st == 400 and "first_frame_mode" in r.get("error", ""), json.dumps(r))
+        noslot9 = json.loads(json.dumps(ffm)); noslot9["name"] = "t_noslot9"; noslot9["slots"]["images"] = noslot9["slots"]["images"][:2]
+        noslot9["segments"] = [{"prompt": "<Picture 1> alone", "seconds": 1, "aspect": "16:9", "megapixels": 0.06}]
+        st, r = api("/job", noslot9); j = wait_job(r["job"]); s1 = json.load(open(SUBMITTED))[-1]
+        check("no slot 9: segment 1 has no guide and no clause", j["state"] == "done" and not any(n.get("class_type") in ("MiniMaxH3AddGuide", "StringConcatenate") for n in s1.values()) and j["segments"][0]["guided"] is False, j.get("error") or "")
 
         # missing LoRA -> exact name in the error
         miss = json.loads(json.dumps(base)); miss["name"] = "t_missing"; miss["segments"][0]["loras"] = [{"name": "NotThere.safetensors"}]
