@@ -701,6 +701,10 @@ def build_prompt(template, mapping, seg, images, videos, audios, seed, opts, pre
     refs, tagmap, listing = build_references(ref_images, videos, audios)
     rp["references_json"] = json.dumps({"references": refs})
     direction = remap_prompt(seg["prompt"], tagmap, f"segment {seg_index+1}", aliases)
+    if aliases:
+        # guide-only: the studio's hint "<Picture 9> is the absolute first frame…" would now read
+        # "the first frame is the absolute first frame…" — the appended constraint carries it instead
+        direction = re.sub(r"\s*the first frame is the absolute first frame of the video\.?", "", direction, flags=re.I).strip()
     rp["direction"] = direction
 
     # prompt provider: passthrough by default, openrouter opt-in. The key comes from the
