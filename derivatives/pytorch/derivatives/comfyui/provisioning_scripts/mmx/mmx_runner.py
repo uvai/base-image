@@ -51,7 +51,7 @@ Spec v2 (v1 specs with refs/first_frame are upgraded on arrival):
 import argparse, base64, copy, hashlib, http.server, json, mimetypes, os, random, re, shutil
 import subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request, urllib.error, uuid
 
-VERSION = "2.1"
+VERSION = "2.2"
 COMFY = "http://127.0.0.1:8188"
 OUTPUT_CANDIDATES = ["/workspace/ComfyUI/output", "/ComfyUI/output", "/root/ComfyUI/output"]
 JOBS = {}
@@ -226,14 +226,26 @@ def nas_run(cmd, timeout=60):
     return r.returncode, r.stdout, r.stderr
 
 def nas_fetch(rel, dest, timeout=900):
-    """Copy share/<rel> to dest (scp over the same ssh path)."""
+    """Copy share/<rel> to dest by streaming `cat` over the same ssh path the listing uses.
+    (scp is avoided on purpose: OpenSSH 9+ scp speaks SFTP by default, and DSM's SFTP
+    server resolves absolute paths against its own root, so /volume1/... came back as
+    "No such file or directory" even though ssh could read it.)"""
     cfg = _nas_config()
     os.makedirs(os.path.dirname(dest), exist_ok=True)
-    scp = ["scp", "-q"] + nas_ssh_cmd(cfg)[1:]
-    src = f"{cfg['userhost']}:" + shell_quote(os.path.join(cfg["share"], rel))
-    r = subprocess.run(scp + [src, dest], capture_output=True, text=True, timeout=timeout)
-    if r.returncode != 0 or not os.path.exists(dest):
-        raise RuntimeError(f"NAS fetch failed for {rel}: {r.stderr.strip()[-200:] or 'no file'}")
+    src = os.path.join(cfg["share"], rel)
+    q = shell_quote(src)
+    cmd = nas_ssh_cmd(cfg) + [cfg["userhost"], f"if [ -f {q} ]; then cat {q}; else echo MMX_NOFILE >&2; exit 3; fi"]
+    tmp = dest + ".part"
+    with open(tmp, "wb") as f:
+        r = subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, timeout=timeout)
+    err = r.stderr.decode(errors="replace").strip()
+    if r.returncode != 0 or os.path.getsize(tmp) == 0:
+        try: os.remove(tmp)
+        except OSError: pass
+        if "MMX_NOFILE" in err:
+            raise RuntimeError(f"NAS fetch failed for {rel}: no such file on the share")
+        raise RuntimeError(f"NAS fetch failed for {rel}: " + (("ssh: " + err.splitlines()[-1][-200:]) if err else f"rc={r.returncode}, empty"))
+    os.replace(tmp, dest)
     return dest
 
 def shell_quote(s):
