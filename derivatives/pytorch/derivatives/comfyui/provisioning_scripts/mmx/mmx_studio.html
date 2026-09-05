@@ -1,0 +1,867 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>mmx studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0f1216;--panel:#171b21;--panel2:#1d222a;--line:#2a313b;--ink:#d6dbe3;--dim:#7d8794;
+  --amber:#e8b84a;--teal:#4fc1a6;--red:#e0645a;--blue:#6ea8fe;--violet:#b48ef0;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,sans-serif;--mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 var(--sans)}
+button,input,select,textarea{font:inherit;color:inherit}
+button{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:5px 11px;cursor:pointer}
+button:hover{border-color:var(--dim)}
+button:disabled{opacity:.45;cursor:default}
+button.go{background:var(--amber);color:#1a1405;border-color:var(--amber);font-weight:600;padding:6px 18px}
+button.go:hover{filter:brightness(1.08)}
+button.danger{color:var(--red)}
+button.small{padding:2px 8px;font-size:11.5px}
+input,select,textarea{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:5px 8px}
+input:focus,select:focus,textarea:focus,button:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+input:disabled,select:disabled{opacity:.5}
+textarea{font-family:var(--mono);font-size:12px;resize:vertical}
+.dim{color:var(--dim)} .mono{font-family:var(--mono)} .small{font-size:11.5px}
+a{color:var(--blue)}
+
+/* frame */
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+header h1{font-size:15px;font-weight:600;margin:0 6px 0 0;letter-spacing:.2px}
+header .grow{flex:1}
+.health{display:inline-flex;align-items:center;gap:6px}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--dim);display:inline-block}
+.dot.ok{background:var(--teal)} .dot.bad{background:var(--red)} .dot.busy{background:var(--amber)}
+main{display:grid;grid-template-columns:330px 300px 1fr;grid-template-rows:1fr auto;gap:12px;padding:12px 16px;height:calc(100vh - 53px)}
+.col{display:flex;flex-direction:column;gap:12px;min-height:0;overflow:auto}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;display:flex;flex-direction:column;min-height:0;flex:none}
+.card .hd{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.card .hd .t{font-weight:600}
+.card .hd .grow{flex:1}
+.card .bd{padding:10px 12px;overflow:auto;min-height:0}
+.card.grow{flex:1;min-height:170px}
+.card.lib{min-height:150px}
+
+/* slots */
+.slotgrid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
+.slot{aspect-ratio:1;border:1px dashed var(--line);border-radius:5px;position:relative;overflow:hidden;background:var(--bg);display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:10.5px;text-align:center}
+.slot.over{border-color:var(--amber);border-style:solid}
+.slot img,.slot video{width:100%;height:100%;object-fit:cover;display:block}
+.slot .tag{position:absolute;left:3px;bottom:3px;background:rgba(0,0,0,.7);padding:1px 5px;border-radius:3px;font-family:var(--mono);font-size:10px;color:#fff;max-width:calc(100% - 6px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.slot.first{grid-column:1/-1;aspect-ratio:16/6;max-height:120px}
+.slot.first .tag{background:var(--amber);color:#1a1405}
+.slot.video .tag{background:rgba(110,168,254,.85);color:#08111f}
+.slot.audio .tag{background:rgba(180,142,240,.9);color:#140a24}
+.slot .x{position:absolute;top:2px;right:2px;background:rgba(0,0,0,.65);border:0;border-radius:4px;padding:0 5px;font-size:11px;line-height:16px;display:none}
+.slot:hover .x{display:block}
+.slot .st{position:absolute;top:2px;left:2px;background:rgba(0,0,0,.7);border-radius:4px;padding:1px 4px;font-size:10px;display:flex;gap:3px;align-items:center;cursor:pointer}
+.slot .st input{width:auto;margin:0}
+.slot .lib{position:absolute;right:3px;bottom:3px;font-size:9px;background:rgba(79,193,166,.85);color:#06201a;border-radius:3px;padding:0 4px}
+.sub{font-size:11px;color:var(--dim);margin:8px 0 4px;text-transform:uppercase;letter-spacing:.08em}
+
+/* libraries */
+.drop{border:1px dashed var(--line);border-radius:6px;padding:10px;text-align:center;color:var(--dim);transition:border-color .15s,background .15s}
+.drop.over{border-color:var(--amber);background:rgba(232,184,74,.06);color:var(--ink)}
+.thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(58px,1fr));gap:6px;margin-top:8px}
+.thumb{position:relative;aspect-ratio:1;border-radius:5px;overflow:hidden;border:1px solid var(--line);background:#000;cursor:grab}
+.thumb img,.thumb video{width:100%;height:100%;object-fit:cover;display:block}
+.thumb .k{position:absolute;left:2px;bottom:2px;font-size:9px;background:rgba(0,0,0,.7);padding:0 4px;border-radius:3px;font-family:var(--mono)}
+.thumb .x{position:absolute;top:2px;right:2px;background:rgba(0,0,0,.65);border:0;border-radius:4px;padding:0 5px;font-size:11px;line-height:16px;display:none}
+.thumb:hover .x{display:block}
+.thumb.aud{display:flex;align-items:center;justify-content:center;font-size:20px;color:var(--violet)}
+.libstate{color:var(--dim);font-size:11.5px;padding:6px 0}
+.libstate.warn{color:var(--amber)}
+.hd input.search{width:110px;padding:2px 6px;font-size:11.5px}
+
+/* prompts */
+.prompt{border:1px solid var(--line);border-radius:6px;padding:8px 10px;margin-bottom:8px;background:var(--panel2);cursor:grab}
+.prompt:active{cursor:grabbing}
+.prompt .name{font-weight:600;display:flex;gap:6px;align-items:center}
+.prompt .name button{padding:1px 7px;font-size:11px}
+.prompt .txt{font-family:var(--mono);font-size:11.5px;color:var(--dim);white-space:pre-wrap;margin-top:4px;max-height:5.2em;overflow:hidden}
+.prompt.editing .txt{display:none}
+.prompt .editor{display:none;margin-top:6px}
+.prompt.editing .editor{display:block}
+.prompt textarea{width:100%;min-height:90px}
+.lorarow{display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin-top:4px;font-size:11.5px}
+.lorarow select{max-width:170px;padding:2px 4px;font-size:11px}
+.lorarow input[type=number]{width:56px;padding:2px 4px;font-size:11px}
+.lorarow .lbl{color:var(--dim)}
+.lorapill{font-family:var(--mono);font-size:10px;color:var(--violet);border:1px solid var(--line);border-radius:3px;padding:0 5px;margin-top:4px;display:inline-block;margin-right:4px}
+
+/* tag buttons */
+.tags{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px}
+.tags button{padding:1px 6px;font-size:10.5px;font-family:var(--mono);display:inline-flex;align-items:center;gap:4px;border-radius:4px}
+.tags button img{width:16px;height:16px;object-fit:cover;border-radius:2px}
+.tags button.pic{border-color:#4a4a2a} .tags button.vid{border-color:#2d3f5c} .tags button.aud{border-color:#3d2d5c} .tags button.subj{border-color:var(--line);color:var(--dim)}
+.tags button.first{border-color:var(--amber);color:var(--amber)}
+
+/* chain */
+.lane{display:grid;grid-template-columns:82px 1fr;gap:10px;padding:10px;border:1px solid var(--line);border-radius:8px;margin-bottom:10px;background:var(--panel2)}
+.lane.over{border-color:var(--amber)}
+.lane .start{aspect-ratio:16/9;background:var(--bg);border:1px solid var(--line);border-radius:5px;overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:10.5px;text-align:center;padding:4px}
+.lane .start img{width:100%;height:100%;object-fit:cover;display:block}
+.lane .n{font-family:var(--mono);color:var(--dim);font-size:11px;margin-top:6px;text-align:center}
+.lane .body{display:flex;flex-direction:column;gap:6px;min-width:0}
+.lane textarea{width:100%;min-height:64px}
+.lane .row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.lane .row label{color:var(--dim);font-size:11.5px}
+.lane .row input[type=number]{width:62px}
+.lane .row select{width:auto}
+.lane .row .grow{flex:1}
+.lane.running{border-color:var(--amber)}
+.lane.done{border-color:var(--teal)}
+.lane.failed,.lane.cancelled{border-color:var(--red)}
+.badge{font-family:var(--mono);font-size:10.5px;padding:1px 6px;border-radius:3px;border:1px solid var(--line);color:var(--dim)}
+.badge.running{color:var(--amber);border-color:var(--amber)}
+.badge.done{color:var(--teal);border-color:var(--teal)}
+.badge.failed,.badge.cancelled{color:var(--red);border-color:var(--red)}
+.badge.lock{color:var(--amber)}
+.opts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px 12px}
+.opts label{display:flex;flex-direction:column;gap:3px;color:var(--dim);font-size:11.5px}
+.opts label input,.opts label select{width:100%}
+.opts label.chk{flex-direction:row;align-items:center;gap:8px;color:var(--ink);align-self:end;padding-bottom:6px}
+.opts label.chk input{width:auto}
+
+/* run strip */
+.run{grid-column:1/-1;max-height:270px}
+.run .bd{display:grid;grid-template-columns:1fr 360px;gap:12px}
+.tiles{display:flex;gap:10px;overflow-x:auto;padding-bottom:4px}
+.tile{flex:0 0 210px;border:1px solid var(--line);border-radius:6px;overflow:hidden;background:var(--panel2)}
+.tile .media{aspect-ratio:16/9;background:#000;display:flex;align-items:center;justify-content:center;color:var(--dim);font-size:11px}
+.tile video,.tile img{width:100%;height:100%;object-fit:contain;display:block;background:#000}
+.tile .cap{display:flex;justify-content:space-between;align-items:center;padding:5px 8px;font-family:var(--mono);font-size:11px;gap:4px;flex-wrap:wrap}
+.tile .cap button{padding:0 6px;font-size:10.5px}
+.tile.final{flex-basis:240px;border-color:var(--teal)}
+.bar{height:6px;background:var(--bg);border-radius:3px;overflow:hidden;border:1px solid var(--line)}
+.bar i{display:block;height:100%;background:var(--amber);width:0;transition:width .4s}
+.bar.total i{background:var(--teal)}
+pre.log{margin:0;font-family:var(--mono);font-size:11px;color:var(--dim);white-space:pre-wrap;overflow:auto;max-height:200px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px}
+.status{display:flex;flex-direction:column;gap:8px}
+.status .line{display:flex;gap:10px;align-items:center;font-family:var(--mono);font-size:12px}
+.hint{color:var(--dim);font-size:11.5px;margin-top:8px}
+.toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--line);padding:8px 14px;border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:opacity .2s;max-width:70vw;z-index:50}
+.toast.show{opacity:1}
+.toast.err{border-color:var(--red)}
+
+/* modal */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:40}
+.modal.show{display:flex}
+.modal .box{background:var(--panel);border:1px solid var(--line);border-radius:10px;width:min(960px,92vw);max-height:88vh;display:flex;flex-direction:column}
+.modal .box .hd{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.modal .box .bd{padding:12px 14px;overflow:auto}
+.modal .cols{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.modal pre{white-space:pre-wrap;font-family:var(--mono);font-size:12px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px;margin:0;max-height:55vh;overflow:auto}
+.modal .ft{display:flex;gap:8px;justify-content:flex-end;padding:10px 14px;border-top:1px solid var(--line)}
+.missing{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;align-items:center}
+.missing .mono{color:var(--red);word-break:break-all}
+@media (max-width:1100px){main{grid-template-columns:1fr 1fr;grid-template-rows:auto auto auto auto;height:auto;overflow:auto}.run{grid-column:1/-1}.run .bd{grid-template-columns:1fr}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <h1>mmx studio <span class="dim small">v2</span></h1>
+  <span class="health"><span class="dot" id="hdot"></span><span id="htxt" class="dim">runner</span></span>
+  <input id="runner" value="http://localhost:8190" style="width:190px" title="runner URL (forwarded port)">
+  <span class="health"><span class="dot" id="tdot"></span><span id="ttxt" class="dim">no workflow loaded</span></span>
+  <button id="btnTpl">Load workflow (API json)</button>
+  <input type="file" id="tplFile" accept=".json,application/json" hidden>
+  <button id="btnRefresh" title="re-list LoRAs/models from ComfyUI and Subjects/VideoRef from the NAS">Refresh</button>
+  <span class="grow"></span>
+  <button id="btnSave">Save project</button>
+  <button id="btnLoad">Open project</button>
+  <input type="file" id="projFile" accept=".json" hidden>
+  <input id="jobname" placeholder="job name" style="width:150px">
+  <button class="go" id="btnGo">Go</button>
+  <button class="danger" id="btnCancel" disabled>Cancel</button>
+</header>
+
+<main>
+  <div class="col">
+    <div class="card">
+      <div class="hd"><span class="t">Reference slots</span><span class="grow"></span><span class="dim small" id="slotcount"></span></div>
+      <div class="bd">
+        <div class="slotgrid" id="imgslots"></div>
+        <div class="sub">videos · soundtrack toggle per slot</div>
+        <div class="slotgrid" id="vidslots"></div>
+        <div class="sub">audio</div>
+        <div class="slotgrid" id="audslots"></div>
+        <div class="hint">Tags in prompts name these slots (<span class="mono">&lt;Picture 9&gt;</span> = first frame). The runner renumbers them to what the model actually sees. Segments after the first start on the previous segment's last frame.</div>
+      </div>
+    </div>
+    <div class="card lib">
+      <div class="hd"><span class="t">Local library</span><span class="grow"></span><button id="btnAddRefs" class="small">Add files</button><input type="file" id="refFiles" accept="image/*,video/*,audio/*" multiple hidden></div>
+      <div class="bd">
+        <div class="drop" id="refdrop">drop images, videos or audio here — they stay in this browser</div>
+        <div class="thumbs" id="thumbs"></div>
+      </div>
+    </div>
+    <div class="card lib grow">
+      <div class="hd"><span class="t">Subjects</span><span class="dim small">NAS</span><span class="grow"></span><input class="search" id="qSubjects" placeholder="search"><span class="dim small" id="nSubjects"></span></div>
+      <div class="bd"><div class="libstate" id="stSubjects">loading…</div><div class="thumbs" id="libSubjects"></div></div>
+    </div>
+    <div class="card lib grow">
+      <div class="hd"><span class="t">VideoRef</span><span class="dim small">NAS</span><span class="grow"></span><input class="search" id="qVideoref" placeholder="search"><span class="dim small" id="nVideoref"></span></div>
+      <div class="bd"><div class="libstate" id="stVideoref">loading…</div><div class="thumbs" id="libVideoref"></div></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="card grow">
+      <div class="hd"><span class="t">Prompt pool</span><span class="grow"></span><button id="btnAddPrompt" class="small">New prompt</button></div>
+      <div class="bd" id="pool"></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="card grow">
+      <div class="hd"><span class="t">Chain</span><span class="dim small" id="chaincount"></span><span class="grow"></span>
+        <button id="btnAddSeg" class="small">Add segment</button></div>
+      <div class="bd" id="lanes"></div>
+    </div>
+    <div class="card">
+      <div class="hd"><span class="t">Defaults</span><span class="grow"></span><span class="dim small">apply to new segments; each lane can override unless locked</span></div>
+      <div class="bd">
+        <div class="opts">
+          <label>seconds <input type="number" id="dSeconds" value="5" min="1" max="30" step="0.5"></label>
+          <label>aspect <select id="dAspect"></select></label>
+          <label>megapixels <input type="number" id="dMp" value="0.7" min="0.2" max="2" step="0.05"></label>
+          <label class="chk"><input type="checkbox" id="dLock"> lock all segments to defaults (aspect + megapixels)</label>
+          <label class="chk"><input type="checkbox" id="dLockSeconds"> …and seconds</label>
+          <label>seed <input type="number" id="dSeed" placeholder="random"></label>
+          <label>seed per segment <select id="dSeedMode"><option value="increment">increment</option><option value="fixed">fixed</option><option value="random">random</option></select></label>
+          <label>fps <input type="number" id="dFps" value="24" min="8" max="60"></label>
+          <label>continuity <select id="dCont"><option value="guide">exact: guide node on previous last frame</option><option value="none">reference only (slot 9)</option></select></label>
+          <label class="chk"><input type="checkbox" id="dConcat" checked> concatenate at the end</label>
+          <label class="chk"><input type="checkbox" id="dFirstClause" checked> add "&lt;Picture 9&gt; is the first frame" hint to prompts (ref2va prompt only)</label>
+          <label class="chk"><input type="checkbox" id="dAuto"> auto-prompt via OpenRouter</label>
+          <label>openrouter model <input id="dModel" value="google/gemini-2.5-flash" placeholder="model id"></label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card run">
+    <div class="hd"><span class="t">Run</span><span class="badge" id="jstate">idle</span><span class="dim small mono" id="jphase"></span><span class="grow"></span><span class="dim small mono" id="jid"></span></div>
+    <div class="bd">
+      <div>
+        <div class="tiles" id="tiles"><div class="dim small" style="padding:20px 6px">Nothing running. Set up the chain and press Go.</div></div>
+      </div>
+      <div class="status">
+        <div class="line"><span class="dim">segments</span><div class="bar total" style="flex:1"><i id="barTotal"></i></div><span id="segdone">0/0</span></div>
+        <div class="line"><span class="dim">step</span><div class="bar" style="flex:1"><i id="barStep"></i></div><span id="steptxt">—</span></div>
+        <div class="line"><span class="dim">elapsed</span><span id="elapsed">—</span></div>
+        <pre class="log" id="log"></pre>
+      </div>
+    </div>
+  </div>
+</main>
+<div class="toast" id="toast"></div>
+
+<div class="modal" id="promptModal">
+  <div class="box">
+    <div class="hd"><span class="t" id="pmTitle">segment prompt</span><span class="grow"></span><button class="small" id="pmClose">close</button></div>
+    <div class="bd">
+      <div class="cols">
+        <div><div class="dim small" style="margin-bottom:4px">direction (as sent, tags renumbered)</div><pre id="pmDirection"></pre></div>
+        <div><div class="dim small" style="margin-bottom:4px">generated prompt (node 186)</div><pre id="pmGenerated"></pre></div>
+      </div>
+      <div class="dim small" id="pmRefs" style="margin-top:8px"></div>
+    </div>
+    <div class="ft"><button id="pmSaveDir">Save direction as pool item</button><button class="go" id="pmSave">Save generated as pool item</button></div>
+  </div>
+</div>
+
+<div class="modal" id="missingModal">
+  <div class="box" style="width:min(720px,92vw)">
+    <div class="hd"><span class="t">Models missing on this instance</span><span class="grow"></span><button class="small" id="mmClose">cancel</button></div>
+    <div class="bd">
+      <div class="dim small" style="margin-bottom:10px">These filenames are in the workflow or a segment's LoRA list but ComfyUI does not have them. Pick a replacement from what is on the instance, or cancel and copy the file over (vgo → LoRAs), then Refresh.</div>
+      <div class="missing" id="mmList"></div>
+    </div>
+    <div class="ft"><button class="go" id="mmApply">Apply and Go</button></div>
+  </div>
+</div>
+
+<script>
+// ─── state ──────────────────────────────────────────────────────────────────
+const ASPECTS = ["16:9","9:16","1:1","4:3","3:4","21:9","4:5","5:4","3:2","2:3"];
+const N_IMG = 9, N_VID = 3, N_AUD = 3, N_AUD_SHOWN = 1, FIRST = 9;
+const LS = {
+  get(k, d){ try{ const v = localStorage.getItem('mmx.'+k); return v===null ? d : JSON.parse(v); }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem('mmx.'+k, JSON.stringify(v)); }catch(e){} },
+};
+let refs = [];            // local library {id, name, kind, blob, url, thumb}  (persisted in IndexedDB)
+// slots: descriptors {kind:'local', id} | {kind:'library', path, name, itemKind}; videos add {soundtrack:true}
+let slots = LS.get('slots', null) || migrateSlots();
+let pool = LS.get('pool', null) || [
+  {id:'p1', name:'establishing', text:'<Subject 1> from <Picture 1>, <Picture 2>. Wide shot, slow push in, natural light, film grain.', loras:[]},
+  {id:'p2', name:'close up', text:'<Subject 1> turns to camera, shallow depth of field, soft key light from the left.', loras:[]},
+];
+let lanes = LS.get('lanes', null) || [ {prompt:'', seconds:5, aspect:'16:9', mp:0.7, seed:'', loras:[]}, {prompt:'', seconds:5, aspect:'16:9', mp:0.7, seed:'', loras:[]} ];
+for(const l of lanes) l.loras = l.loras || [];
+for(const p of pool) p.loras = p.loras || [];
+let template = LS.get('template', null);
+let templateName = LS.get('templateName', '');
+let jobId = LS.get('job', null);
+let jobState = null;
+let pollTimer = null;
+let dragPayload = null;
+let models = LS.get('models', null);      // {loras, unets, vaes, clips}
+let library = {subjects:null, videoref:null};   // {items, locked, error}
+let lastHealth = null;
+
+function migrateSlots(){
+  const s = {images: Array(N_IMG).fill(null), videos: Array(N_VID).fill(null), audios: Array(N_AUD).fill(null)};
+  const old = LS.get('idslots', null), first = LS.get('first', null);
+  if(old) old.forEach((id,i)=>{ if(id && i<8) s.images[i]={kind:'local', id}; });
+  if(first) s.images[FIRST-1] = {kind:'local', id:first};
+  return s;
+}
+
+// ─── tiny helpers ───────────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const el = (tag, attrs={}, ...kids) => { const e = document.createElement(tag); for(const [k,v] of Object.entries(attrs)){ if(k==='class') e.className=v; else if(k.startsWith('on')) e.addEventListener(k.slice(2), v); else if(k==='html') e.innerHTML=v; else e.setAttribute(k,v);} for(const c of kids){ if(c==null) continue; e.append(typeof c==='string'? document.createTextNode(c): c);} return e; };
+const uid = () => Math.random().toString(36).slice(2,9);
+function toast(msg, err){ const t=$('toast'); t.textContent=msg; t.className='toast show'+(err?' err':''); clearTimeout(t._t); t._t=setTimeout(()=>t.className='toast',err?6000:2500); }
+const runnerUrl = () => $('runner').value.replace(/\/$/,'');
+const fmtT = s => s==null ? '—' : (s<60 ? s+'s' : Math.floor(s/60)+'m '+String(s%60).padStart(2,'0')+'s');
+function blobToB64(blob){ return new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result.split(',')[1]); r.onerror=rej; r.readAsDataURL(blob); }); }
+function b64ToBlob(b64, type){ const bin=atob(b64); const u=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i); return new Blob([u],{type}); }
+function kindOf(type, name){ if(type.startsWith('image/')) return 'image'; if(type.startsWith('video/')) return 'video'; if(type.startsWith('audio/')) return 'audio'; const e=(name||'').split('.').pop().toLowerCase(); if(['mp4','mov','webm','m4v','mkv'].includes(e)) return 'video'; if(['wav','mp3','flac','m4a','aac','ogg'].includes(e)) return 'audio'; if(['jpg','jpeg','png','webp','gif','bmp'].includes(e)) return 'image'; return null; }
+async function fetchJson(url, opts){ const r = await fetch(url, {cache:'no-store', ...(opts||{})}); const j = await r.json().catch(()=>({error:r.statusText})); if(!r.ok) throw new Error(j.error||r.statusText); return j; }
+
+// ─── IndexedDB for the local library ────────────────────────────────────────
+const DB = {
+  db:null,
+  open(){ return new Promise((res,rej)=>{ const r=indexedDB.open('mmx',1); r.onupgradeneeded=()=>r.result.createObjectStore('refs',{keyPath:'id'}); r.onsuccess=()=>{this.db=r.result;res();}; r.onerror=()=>rej(r.error); }); },
+  all(){ return new Promise((res,rej)=>{ const t=this.db.transaction('refs').objectStore('refs').getAll(); t.onsuccess=()=>res(t.result); t.onerror=()=>rej(t.error); }); },
+  put(o){ return new Promise((res,rej)=>{ const t=this.db.transaction('refs','readwrite').objectStore('refs').put(o); t.onsuccess=res; t.onerror=()=>rej(t.error); }); },
+  del(id){ return new Promise((res,rej)=>{ const t=this.db.transaction('refs','readwrite').objectStore('refs').delete(id); t.onsuccess=res; t.onerror=()=>rej(t.error); }); },
+};
+
+// ─── local references ───────────────────────────────────────────────────────
+function videoThumb(url){
+  return new Promise(res=>{
+    const v = document.createElement('video'); v.muted=true; v.preload='auto'; v.src=url;
+    const done = ()=>{ try{ const c=document.createElement('canvas'); c.width=v.videoWidth||160; c.height=v.videoHeight||90; c.getContext('2d').drawImage(v,0,0,c.width,c.height); res(c.toDataURL('image/jpeg',.8)); }catch(e){ res(null); } };
+    v.addEventListener('seeked', done, {once:true});
+    v.addEventListener('loadeddata', ()=>{ try{ v.currentTime = Math.min(0.5, (v.duration||1)/3); }catch(e){ done(); } }, {once:true});
+    v.addEventListener('error', ()=>res(null), {once:true});
+    setTimeout(()=>res(null), 4000);
+  });
+}
+async function hydrateRef(r){
+  r.url = URL.createObjectURL(r.blob);
+  r.kind = r.kind || kindOf(r.blob.type, r.name) || 'image';
+  if(r.kind==='image') r.thumb = r.url;
+  else if(r.kind==='video') r.thumb = await videoThumb(r.url);
+  return r;
+}
+async function addRefFiles(files){
+  for(const f of files){
+    const kind = kindOf(f.type, f.name); if(!kind){ toast('skipped '+f.name+' (not an image/video/audio)', true); continue; }
+    const r = {id:uid(), name:f.name, kind, blob:f};
+    refs.push(r); await hydrateRef(r);
+    try{ await DB.put({id:r.id, name:r.name, kind, blob:f}); }catch(e){ toast('Library not persisted in this browser (IndexedDB unavailable)', true); }
+  }
+  renderRefs(); renderSlots();
+}
+const refById = id => refs.find(r=>r.id===id);
+function thumbEl(kind, url, name){
+  if(kind==='audio' || !url) return el('div',{class:'thumb aud',title:name}, kind==='audio' ? '♫' : (kind==='video'?'▶':'?'));
+  return el('img',{src:url,alt:name});
+}
+function renderRefs(){
+  const t = $('thumbs'); t.innerHTML='';
+  for(const r of refs){
+    const d = el('div',{class:'thumb',draggable:'true',title:r.name+' ('+r.kind+')',
+      ondragstart:e=>{ dragPayload={type:'ref',id:r.id,kind:r.kind}; e.dataTransfer.effectAllowed='copy'; e.dataTransfer.setData('text/plain','ref:'+r.id); }},
+      r.kind==='audio' ? el('div',{class:'thumb aud',style:'border:0;position:absolute;inset:0'}, '♫') : thumbEl(r.kind, r.thumb, r.name),
+      el('span',{class:'k'}, r.kind==='image'?'img':r.kind==='video'?'vid':'aud'),
+      el('button',{class:'x',title:'remove from library',onclick:async e=>{ e.stopPropagation(); await DB.del(r.id).catch(()=>{}); refs=refs.filter(x=>x.id!==r.id); forEachSlot((arr,i,d)=>{ if(d && d.kind==='local' && d.id===r.id) arr[i]=null; }); persistSlots(); renderRefs(); renderSlots(); }},'×'));
+    t.append(d);
+  }
+  if(!refs.length) t.append(el('div',{class:'dim small'},'No local references yet.'));
+}
+$('refdrop').addEventListener('dragover', e=>{ if(e.dataTransfer.types.includes('Files')){ e.preventDefault(); $('refdrop').classList.add('over'); } });
+$('refdrop').addEventListener('dragleave', ()=>$('refdrop').classList.remove('over'));
+$('refdrop').addEventListener('drop', e=>{ e.preventDefault(); $('refdrop').classList.remove('over'); addRefFiles([...e.dataTransfer.files]); });
+$('btnAddRefs').onclick = ()=>$('refFiles').click();
+$('refFiles').onchange = e=>{ const fl=[...e.target.files]; e.target.value=''; addRefFiles(fl); };
+
+// ─── NAS libraries (Subjects / VideoRef via the runner) ─────────────────────
+const LIBS = [{key:'subjects', st:'stSubjects', grid:'libSubjects', q:'qSubjects', n:'nSubjects'},
+              {key:'videoref', st:'stVideoref', grid:'libVideoref', q:'qVideoref', n:'nVideoref'}];
+const libThumbUrl = path => runnerUrl()+'/library/thumb?path='+encodeURIComponent(path);
+async function loadLibrary(key, fresh){
+  try{ library[key] = await fetchJson(runnerUrl()+'/library?kind='+key+(fresh?'&fresh=1':'')); }
+  catch(e){ library[key] = {items:[], error: e.message.includes('Failed to fetch') ? 'runner unreachable' : e.message}; }
+  renderLibrary(key);
+  return library[key];
+}
+function renderLibrary(key){
+  const L = LIBS.find(l=>l.key===key); const lib = library[key]; const st=$(L.st), g=$(L.grid); g.innerHTML='';
+  if(!lib){ st.textContent='loading…'; st.className='libstate'; return; }
+  if(lib.locked){ st.textContent='share is locked — unlock it in the vgo dashboard, then Refresh'; st.className='libstate warn'; $(L.n).textContent=''; return; }
+  if(lib.error){ st.textContent=lib.error; st.className='libstate warn'; $(L.n).textContent=''; return; }
+  const q = ($(L.q).value||'').trim().toLowerCase();
+  const items = (lib.items||[]).filter(it=>!q || (it.path.toLowerCase().includes(q)));
+  st.textContent = items.length ? '' : ((lib.items||[]).length ? 'no match' : 'folder is empty'); st.className='libstate';
+  $(L.n).textContent = items.length + (q?'/'+lib.items.length:'');
+  for(const it of items){
+    const d = el('div',{class:'thumb',draggable:'true',title:it.path+' ('+it.kind+')',
+      ondragstart:e=>{ dragPayload={type:'lib',item:it}; e.dataTransfer.effectAllowed='copy'; e.dataTransfer.setData('text/plain','lib:'+it.path); }},
+      it.kind==='audio' ? el('div',{class:'thumb aud',style:'border:0;position:absolute;inset:0'},'♫') : el('img',{src:libThumbUrl(it.path),alt:it.name,loading:'lazy',onerror:e=>{ e.target.replaceWith(el('div',{class:'thumb aud',style:'border:0;position:absolute;inset:0;font-size:11px'}, it.kind==='video'?'▶':'?')); }}),
+      el('span',{class:'k'}, it.kind==='image'?'img':it.kind==='video'?'vid':'aud'));
+    g.append(d);
+  }
+}
+for(const L of LIBS) $(L.q).addEventListener('input', ()=>renderLibrary(L.key));
+
+// ─── slots ──────────────────────────────────────────────────────────────────
+function forEachSlot(fn){ for(const k of ['images','videos','audios']) slots[k].forEach((d,i)=>fn(slots[k], i, d, k)); }
+function persistSlots(){ LS.set('slots', slots); }
+function slotDesc(d){ // -> {thumb, name, kind, isLib}
+  if(!d) return null;
+  if(d.kind==='local'){ const r=refById(d.id); return r ? {thumb:r.thumb, name:r.name, kind:r.kind, isLib:false, ok:true} : {name:'(missing local file)', ok:false}; }
+  return {thumb: d.itemKind==='audio'?null:libThumbUrl(d.path), name:d.name||d.path, kind:d.itemKind, isLib:true, ok:true};
+}
+function acceptsPayload(kindKey, payload){
+  if(!payload) return false;
+  const want = kindKey==='images'?'image':kindKey==='videos'?'video':'audio';
+  if(payload.type==='ref') return payload.kind===want;
+  if(payload.type==='lib') return payload.item.kind===want;
+  return false;
+}
+function payloadToDesc(payload){
+  if(payload.type==='ref') return {kind:'local', id:payload.id};
+  return {kind:'library', path:payload.item.path, name:payload.item.name, itemKind:payload.item.kind};
+}
+function makeSlot(kindKey, i){
+  const d = slots[kindKey][i]; const isFirst = kindKey==='images' && i===FIRST-1;
+  const cls = 'slot'+(isFirst?' first':'')+(kindKey==='videos'?' video':kindKey==='audios'?' audio':'');
+  const s = el('div',{class:cls,'data-kind':kindKey,'data-slot':String(i+1)});
+  const info = slotDesc(d);
+  if(info && info.ok){
+    if(info.thumb) s.append(el('img',{src:info.thumb,alt:info.name}));
+    else s.append(el('div',{class:'dim',style:'font-size:18px'}, info.kind==='audio'?'♫':'▶'));
+    if(info.isLib) s.append(el('span',{class:'lib',title:'from the NAS library'},'NAS'));
+  } else if(info){ s.append(el('span',{class:'dim'}, info.name)); }
+  else s.append(document.createTextNode(isFirst ? 'first frame — drop an image here' : ''));
+  const label = kindKey==='images' ? (isFirst?'Picture 9 · first frame':'Picture '+(i+1)) : kindKey==='videos' ? 'Video '+(i+1) : 'Audio '+(i+1);
+  s.append(el('span',{class:'tag',title: info?info.name:label}, label));
+  if(kindKey==='videos' && d){
+    const cb = el('input',{type:'checkbox',title:'use this video\'s soundtrack (<Audio n>)'}); cb.checked = d.soundtrack!==false;
+    cb.onchange = ()=>{ d.soundtrack = cb.checked; persistSlots(); };
+    s.append(el('label',{class:'st',title:'use soundtrack'}, cb, '♫'));
+  }
+  if(d) s.append(el('button',{class:'x',title:'clear slot',onclick:e=>{ e.stopPropagation(); slots[kindKey][i]=null; persistSlots(); renderSlots(); }},'×'));
+  s.addEventListener('dragover', e=>{ if(acceptsPayload(kindKey, dragPayload)){ e.preventDefault(); s.classList.add('over'); } });
+  s.addEventListener('dragleave', ()=>s.classList.remove('over'));
+  s.addEventListener('drop', e=>{ e.preventDefault(); s.classList.remove('over'); if(!acceptsPayload(kindKey, dragPayload)) return; setSlot(kindKey, i, payloadToDesc(dragPayload)); });
+  return s;
+}
+function setSlot(kindKey, i, desc){
+  if(kindKey==='videos' && desc) desc.soundtrack = desc.soundtrack!==false;
+  slots[kindKey][i] = desc; persistSlots(); renderSlots();
+}
+function renderSlots(){
+  const g = $('imgslots'); g.innerHTML='';
+  for(let i=0;i<N_IMG-1;i++) g.append(makeSlot('images', i));
+  g.append(makeSlot('images', FIRST-1));
+  const v = $('vidslots'); v.innerHTML=''; for(let i=0;i<N_VID;i++) v.append(makeSlot('videos', i));
+  const a = $('audslots'); a.innerHTML=''; for(let i=0;i<N_AUD_SHOWN;i++) a.append(makeSlot('audios', i));
+  const n = k=>slots[k].filter(Boolean).length;
+  $('slotcount').textContent = `${n('images')} img · ${n('videos')} vid · ${n('audios')} aud`;
+  renderLanes(); renderPool();
+}
+
+// ─── tag buttons (F4) ───────────────────────────────────────────────────────
+function insertAtCursor(ta, text, onchange){
+  const s = ta.selectionStart ?? ta.value.length, e = ta.selectionEnd ?? s;
+  const before = ta.value.slice(0,s), after = ta.value.slice(e);
+  const pad = before && !/\s$/.test(before) ? ' ' : '';
+  const padAfter = after && !/^\s/.test(after) ? ' ' : '';
+  ta.value = before + pad + text + padAfter + after;
+  const pos = (before + pad + text + padAfter).length;
+  ta.focus(); ta.setSelectionRange(pos, pos);
+  onchange && onchange(ta.value);
+}
+function tagButtons(ta, onchange, segIndex){
+  const wrap = el('div',{class:'tags'});
+  const add = (tag, cls, thumb, title)=>{ const b=el('button',{type:'button',class:cls,title:title||('insert '+tag),onmousedown:e=>e.preventDefault(),onclick:()=>insertAtCursor(ta, tag, onchange)}); if(thumb) b.append(el('img',{src:thumb,alt:''})); b.append(tag); wrap.append(b); };
+  slots.images.forEach((d,i)=>{
+    const info = slotDesc(d); const isFirst = i===FIRST-1;
+    if(info && info.ok) add(`<Picture ${i+1}>`, isFirst?'pic first':'pic', info.thumb, info.name);
+    else if(isFirst && segIndex>0) add(`<Picture 9>`, 'pic first', null, 'previous segment\'s last frame');
+  });
+  slots.videos.forEach((d,i)=>{ const info=slotDesc(d); if(info && info.ok) add(`<Video ${i+1}>`, 'vid', info.thumb, info.name); });
+  slots.audios.forEach((d,i)=>{ const info=slotDesc(d); if(info && info.ok) add(`<Audio ${i+1}>`, 'aud', null, info.name); });
+  for(let i=1;i<=3;i++) add(`<Subject ${i}>`, 'subj');
+  return wrap;
+}
+
+// ─── LoRA selectors (F7) ────────────────────────────────────────────────────
+function loraRow(list, onchange){
+  // list: [{name,strength}] (max 2). Renders two slots of select+strength.
+  const row = el('div',{class:'lorarow'});
+  const names = (models && models.loras) || [];
+  for(let j=0;j<2;j++){
+    const cur = list[j] || null;
+    const sel = el('select',{title: j? 'optional second LoRA':'LoRA for this prompt', onchange:e=>{ const v=e.target.value; if(!v){ list.splice(j,1); } else { list[j] = {name:v, strength: list[j]?.strength ?? 0.85}; } onchange(); }});
+    sel.append(el('option',{value:''}, j? '+ second LoRA':'no LoRA'));
+    const all = [...names]; if(cur && !all.includes(cur.name)) all.unshift(cur.name);
+    for(const n of all) sel.append(el('option',{value:n, ...(cur && cur.name===n?{selected:''}:{})}, n.replace(/\.safetensors$/,'')+(names.includes(n)?'':' (missing)')));
+    const str = el('input',{type:'number',min:'0',max:'2',step:'0.05',value: cur? cur.strength : 0.85, title:'strength', onchange:e=>{ if(list[j]) { list[j].strength=+e.target.value; onchange(); } }});
+    if(!cur) str.disabled = true;
+    row.append(el('span',{class:'lbl'}, j? '+':'LoRA'), sel, str);
+    if(j===0 && !cur) break;
+  }
+  if(!names.length) row.append(el('span',{class:'lbl'}, models ? '(no LoRAs listed — Refresh)' : '(model list not loaded — Refresh)'));
+  return row;
+}
+const loraPills = list => (list||[]).map(l=>el('span',{class:'lorapill'}, l.name.replace(/\.safetensors$/,'')+' @'+(l.strength??0.85)));
+
+// ─── prompt pool ────────────────────────────────────────────────────────────
+function savePool(){ LS.set('pool', pool); }
+function renderPool(){
+  const p = $('pool'); const editing = new Set([...p.querySelectorAll('.prompt.editing')].map(b=>b.dataset.id)); p.innerHTML='';
+  for(const pr of pool){
+    const box = el('div',{class:'prompt'+(editing.has(pr.id)?' editing':''),draggable:'true','data-id':pr.id,
+      ondragstart:e=>{ dragPayload={type:'prompt',id:pr.id}; e.dataTransfer.effectAllowed='copy'; e.dataTransfer.setData('text/plain',pr.text); }});
+    const nameIn = el('input',{value:pr.name,style:'flex:1;padding:2px 6px',placeholder:'name',onchange:e=>{pr.name=e.target.value;savePool();}});
+    const editBtn = el('button',{onclick:()=>{ box.classList.toggle('editing'); if(box.classList.contains('editing')) ta.focus(); }},'edit');
+    const delBtn = el('button',{class:'danger',onclick:()=>{ pool=pool.filter(x=>x.id!==pr.id); savePool(); renderPool(); }},'×');
+    const ta = el('textarea',{oninput:e=>{ pr.text=e.target.value; savePool(); txt.textContent=pr.text||'(empty)'; }}); ta.value=pr.text;
+    const txt = el('div',{class:'txt'},pr.text||'(empty)');
+    const editor = el('div',{class:'editor'}, tagButtons(ta, v=>{ pr.text=v; savePool(); txt.textContent=v; }, 0), ta, loraRow(pr.loras, ()=>{ savePool(); renderPool(); }));
+    box.append(el('div',{class:'name'},nameIn,editBtn,delBtn), txt, el('div',{}, ...loraPills(pr.loras)), editor);
+    p.append(box);
+  }
+  if(!pool.length) p.append(el('div',{class:'dim small'},'No prompts yet. New prompt to add one, then drag it onto a segment.'));
+}
+$('btnAddPrompt').onclick = ()=>{ pool.unshift({id:uid(),name:'untitled',text:'',loras:[]}); savePool(); renderPool(); document.querySelector('.prompt')?.classList.add('editing'); document.querySelector('.prompt textarea')?.focus(); };
+
+// ─── chain lanes ────────────────────────────────────────────────────────────
+function saveLanes(){ LS.set('lanes', lanes); }
+const locked = ()=>$('dLock').checked, lockedSec = ()=>$('dLock').checked && $('dLockSeconds').checked;
+function laneStartInfo(i){
+  if(i===0){ const info=slotDesc(slots.images[FIRST-1]); return info && info.ok ? {url:info.thumb,label:'first frame'} : {label:'first frame — drop an image in slot 9 (optional)'}; }
+  const prev = jobState?.segments?.[i-1];
+  if(prev?.lastframe){ const l=prev.lastframe; return {url:mediaUrl(l),label:'from segment '+i}; }
+  return {label:'last frame of segment '+i};
+}
+function renderLanes(){
+  const L = $('lanes'); L.innerHTML='';
+  $('chaincount').textContent = lanes.length+' segment'+(lanes.length!==1?'s':'') + (locked()?' · locked to defaults':'');
+  lanes.forEach((ln,i)=>{
+    const st = jobState?.segments?.[i]?.state || 'pending';
+    const lane = el('div',{class:'lane '+st});
+    const info = laneStartInfo(i);
+    const start = el('div',{class:'start'}, info.url ? el('img',{src:info.url,alt:''}) : info.label);
+    const left = el('div',{}, start, el('div',{class:'n'},'segment '+(i+1)));
+    const ta = el('textarea',{placeholder:'drop a prompt from the pool, or type here', oninput:e=>{ ln.prompt=e.target.value; saveLanes(); }}); ta.value=ln.prompt;
+    const lk = locked(), lks = lockedSec();
+    const row = el('div',{class:'row'},
+      el('label',{},'sec'), el('input',{type:'number',min:'1',max:'30',step:'0.5',value: lks? $('dSeconds').value : ln.seconds, ...(lks?{disabled:''}:{}), onchange:e=>{ln.seconds=+e.target.value;saveLanes();}}),
+      el('label',{},'aspect'), aspectSelect(lk? $('dAspect').value : ln.aspect, v=>{ln.aspect=v;saveLanes();}, lk),
+      el('label',{},'mp'), el('input',{type:'number',min:'0.2',max:'2',step:'0.05',value: lk? $('dMp').value : ln.mp, ...(lk?{disabled:''}:{}), onchange:e=>{ln.mp=+e.target.value;saveLanes();}}),
+      el('label',{},'seed'), el('input',{type:'number',placeholder:'auto',value:ln.seed,style:'width:110px',onchange:e=>{ln.seed=e.target.value;saveLanes();}}),
+      el('span',{class:'grow'}),
+      lk ? el('span',{class:'badge lock',title:'aspect/megapixels follow Defaults'}, 'locked') : null,
+      el('span',{class:'badge '+st}, st),
+      el('button',{class:'small',title:'move up',onclick:()=>{ if(i>0){[lanes[i-1],lanes[i]]=[lanes[i],lanes[i-1]]; saveLanes(); renderLanes();} }},'↑'),
+      el('button',{class:'small',title:'move down',onclick:()=>{ if(i<lanes.length-1){[lanes[i+1],lanes[i]]=[lanes[i],lanes[i+1]]; saveLanes(); renderLanes();} }},'↓'),
+      el('button',{class:'small danger',onclick:()=>{ lanes.splice(i,1); saveLanes(); renderLanes(); }},'×'));
+    lane.append(left, el('div',{class:'body'}, tagButtons(ta, v=>{ ln.prompt=v; saveLanes(); }, i), ta, loraRow(ln.loras, ()=>{ saveLanes(); renderLanes(); }), row));
+    lane.addEventListener('dragover', e=>{ if(dragPayload?.type==='prompt'){ e.preventDefault(); lane.classList.add('over'); } });
+    lane.addEventListener('dragleave', ()=>lane.classList.remove('over'));
+    lane.addEventListener('drop', e=>{ e.preventDefault(); lane.classList.remove('over'); if(dragPayload?.type!=='prompt') return; const pr=pool.find(x=>x.id===dragPayload.id); if(pr){ ln.prompt=pr.text; ln.loras = JSON.parse(JSON.stringify(pr.loras||[])); saveLanes(); renderLanes(); } });
+    L.append(lane);
+  });
+}
+function aspectSelect(val, onch, disabled){ const s=el('select',{onchange:e=>onch(e.target.value), ...(disabled?{disabled:''}:{})}); for(const a of ASPECTS) s.append(el('option',{value:a, ...(a===val?{selected:''}:{})},a)); return s; }
+$('btnAddSeg').onclick = ()=>{ lanes.push({prompt:'', seconds:+$('dSeconds').value, aspect:$('dAspect').value, mp:+$('dMp').value, seed:'', loras:[]}); saveLanes(); renderLanes(); };
+
+// defaults
+for(const a of ASPECTS) $('dAspect').append(el('option',{value:a},a));
+const DEF_VALS = ['dSeconds','dAspect','dMp','dSeed','dSeedMode','dFps','dModel','dCont'], DEF_CHK = ['dConcat','dFirstClause','dAuto','dLock','dLockSeconds'];
+const defaults = LS.get('defaults', {});
+for(const id of DEF_VALS) { if(defaults[id]!=null) $(id).value=defaults[id]; $(id).addEventListener('change', ()=>{ saveDefaults(); if(locked()) renderLanes(); }); }
+for(const id of DEF_CHK) { if(defaults[id]!=null) $(id).checked=defaults[id]; $(id).addEventListener('change', ()=>{ saveDefaults(); if(id==='dAuto') health(); if(id==='dLock'||id==='dLockSeconds') renderLanes(); }); }
+function saveDefaults(){ const d={}; for(const id of DEF_VALS) d[id]=$(id).value; for(const id of DEF_CHK) d[id]=$(id).checked; LS.set('defaults',d); }
+
+// ─── workflow template ──────────────────────────────────────────────────────
+const NEEDED = {'185':'MiniMaxH3ReferencePack','184':'MiniMaxH3ReferenceToVideo','132':'PrimitiveFloat','154':'RandomNoise','119':'VHS_VideoCombine','195':'SaveImage'};
+function checkTemplate(t){ return Object.entries(NEEDED).filter(([id,cls])=>!t[id] || t[id].class_type!==cls).map(([id,cls])=>id+' '+cls); }
+function renderTemplate(){
+  const ok = template && !checkTemplate(template).length;
+  $('tdot').className = 'dot '+(template ? (ok?'ok':'bad') : '');
+  $('ttxt').textContent = template ? (ok ? templateName+' ✓' : 'workflow missing nodes: '+checkTemplate(template).join(', ')) : 'no workflow loaded';
+}
+$('btnTpl').onclick = ()=>$('tplFile').click();
+$('tplFile').onchange = async e=>{ const f=e.target.files[0]; if(!f) return; try{ const t=JSON.parse(await f.text()); if(t.nodes && t.links) throw new Error('that is the UI-format workflow; export with Save (API Format)'); if(t['193']?.inputs?.value) { t['193'].inputs.value=''; toast('API key found in node 193 — dropped; the runner supplies the key', true); } const miss=checkTemplate(t); template=t; templateName=f.name; LS.set('template',t); LS.set('templateName',f.name); renderTemplate(); toast(miss.length? 'Loaded, but missing nodes: '+miss.join(', ') : 'Workflow loaded: '+f.name, miss.length>0); }catch(err){ toast('Could not load workflow: '+err.message, true); } e.target.value=''; };
+
+// ─── runner health / models / refresh (F8) ──────────────────────────────────
+async function health(){
+  try{
+    const h = await fetchJson(runnerUrl()+'/health'); lastHealth = h;
+    $('hdot').className='dot '+(h.comfy?'ok':'busy');
+    $('htxt').textContent = (h.comfy ? 'runner + ComfyUI' : 'runner up, ComfyUI not answering') + (h.openrouter_key ? ', key loaded' : ($('dAuto').checked ? ', no OpenRouter key' : '')) + (h.version? ' v'+h.version : '');
+    if(h.version && !String(h.version).startsWith('2')) $('htxt').textContent += ' (runner v1 — update it)';
+  }catch(e){ $('hdot').className='dot bad'; $('htxt').textContent='runner unreachable'; lastHealth=null; }
+}
+async function loadModels(fresh){
+  const m = await fetchJson(runnerUrl()+'/models'+(fresh?'?fresh=1':''));
+  models = m; LS.set('models', m); return m;
+}
+async function refreshAll(){
+  const btn = $('btnRefresh'); btn.disabled = true; btn.textContent='Refreshing…';
+  const before = {loras: new Set(models?.loras||[]), subjects: new Set((library.subjects?.items||[]).map(i=>i.path)), videoref: new Set((library.videoref?.items||[]).map(i=>i.path))};
+  const notes = [];
+  try{
+    await health();
+    try{ const m = await loadModels(true); const nw = m.loras.filter(x=>!before.loras.has(x)).length; notes.push(nw ? `${nw} new LoRA${nw>1?'s':''}` : `${m.loras.length} LoRAs`); renderPool(); renderLanes(); }
+    catch(e){ notes.push('models: '+e.message); }
+    for(const L of LIBS){
+      const lib = await loadLibrary(L.key, true);
+      if(lib.locked) notes.push(L.key+': share locked');
+      else if(lib.error) notes.push(L.key+': '+lib.error);
+      else { const nw = lib.items.filter(i=>!before[L.key].has(i.path)).length; notes.push(nw ? `${nw} new ${L.key==='subjects'?'Subject':'VideoRef'}${nw>1?'s':''}` : `${lib.items.length} ${L.key==='subjects'?'Subjects':'VideoRefs'}`); }
+    }
+    renderSlots();
+    toast('Refreshed — '+notes.join(', '));
+  } finally { btn.disabled=false; btn.textContent='Refresh'; }
+}
+$('btnRefresh').onclick = refreshAll;
+$('runner').addEventListener('change', ()=>{ LS.set('runner',$('runner').value); health(); refreshAll(); });
+if(LS.get('runner')) $('runner').value = LS.get('runner');
+
+// ─── validation (F1) ────────────────────────────────────────────────────────
+const TAG_RE = /<\s*(picture|video|audio)\s*(\d+)\s*>/gi;
+function occupied(kindKey, n, segIndex){
+  if(kindKey==='images' && n===FIRST && segIndex>0) return true;   // chained last frame
+  const arr = slots[kindKey]; if(n<1 || n>arr.length) return false;
+  const info = slotDesc(arr[n-1]); return !!(info && info.ok);
+}
+function validateTags(){
+  const errs = [];
+  lanes.forEach((ln,i)=>{
+    const text = ln.prompt.replace(/\{\{\s*first\s*\}\}/gi, '<Picture 9>');
+    const bad = new Set();
+    for(const m of text.matchAll(TAG_RE)){
+      const kind = m[1].toLowerCase(), n = +m[2];
+      const key = kind==='picture'?'images':kind==='video'?'videos':'audios';
+      const cap = key==='images'?N_IMG:key==='videos'?N_VID:N_AUD;
+      if(n<1 || n>cap) bad.add(`<${kind[0].toUpperCase()+kind.slice(1)} ${n}> (only 1–${cap})`);
+      else if(!occupied(key, n, i)) bad.add(`<${kind[0].toUpperCase()+kind.slice(1)} ${n}>`);
+    }
+    if(bad.size) errs.push(`segment ${i+1}: ${[...bad].join(', ')} refer${bad.size===1?'s':''} to an empty slot`);
+  });
+  return errs;
+}
+
+// ─── model pre-validation (F7) ──────────────────────────────────────────────
+function templateModelRefs(t){
+  // [{node, input, value, list}] for every model filename the template names
+  const out = [];
+  for(const [nid,node] of Object.entries(t)){
+    const inp = node.inputs||{}; const c = node.class_type;
+    if(c==='UNETLoader' && typeof inp.unet_name==='string') out.push({node:nid,input:'unet_name',value:inp.unet_name,list:'unets'});
+    if(c==='VAELoader' && typeof inp.vae_name==='string') out.push({node:nid,input:'vae_name',value:inp.vae_name,list:'vaes'});
+    if(c==='CLIPLoader' && typeof inp.clip_name==='string') out.push({node:nid,input:'clip_name',value:inp.clip_name,list:'clips'});
+    if(c==='LoraLoaderModelOnly' && typeof inp.lora_name==='string') out.push({node:nid,input:'lora_name',value:inp.lora_name,list:'loras'});
+    if(c==='Power Lora Loader (rgthree)') for(const [k,v] of Object.entries(inp)) if(/^lora_\d+$/.test(k) && v && typeof v==='object' && v.on && typeof v.lora==='string') out.push({node:nid,input:k,value:v.lora,list:'loras',sub:'lora'});
+  }
+  return out;
+}
+function findMissingModels(m){
+  const miss = [];
+  for(const r of templateModelRefs(template)){ const have = m[r.list]||[]; if(have.length && !have.includes(r.value)) miss.push({...r, where:'workflow node '+r.node}); }
+  lanes.forEach((ln,i)=>(ln.loras||[]).forEach((l,j)=>{ if((m.loras||[]).length && !m.loras.includes(l.name)) miss.push({lane:i,idx:j,value:l.name,list:'loras',where:'segment '+(i+1)+' LoRA'}); }));
+  return miss;
+}
+function showMissingModal(miss, m){
+  return new Promise(res=>{
+    const list = $('mmList'); list.innerHTML='';
+    const sels = miss.map(x=>{
+      const sel = el('select',{}); sel.append(el('option',{value:''},'— leave as is (will fail) —'));
+      for(const n of (m[x.list]||[])) sel.append(el('option',{value:n},n));
+      list.append(el('div',{}, el('div',{class:'mono small'}, x.value), el('div',{class:'dim small'}, x.where+' · '+x.list)), sel);
+      return sel;
+    });
+    const done = ok=>{ $('missingModal').classList.remove('show'); $('mmApply').onclick=null; $('mmClose').onclick=null; res(ok); };
+    $('mmClose').onclick = ()=>done(false);
+    $('mmApply').onclick = ()=>{
+      miss.forEach((x,k)=>{ const v=sels[k].value; if(!v) return;
+        if(x.lane!=null){ lanes[x.lane].loras[x.idx].name=v; saveLanes(); }
+        else if(x.sub){ template[x.node].inputs[x.input].lora=v; }
+        else template[x.node].inputs[x.input]=v; });
+      LS.set('template', template); renderLanes(); done(true);
+    };
+    $('missingModal').classList.add('show');
+  });
+}
+
+// ─── build spec + go ────────────────────────────────────────────────────────
+async function descToSrc(d){
+  if(d.kind==='library') return {kind:'library', path:d.path};
+  const r = refById(d.id); if(!r) throw new Error('a slot points at a local file that is no longer in the library');
+  return {kind:'local', name:r.name, data: await blobToB64(r.blob)};
+}
+async function buildSpec(){
+  if(!template) throw new Error('load the API-format workflow first');
+  const miss = checkTemplate(template); if(miss.length) throw new Error('workflow is missing nodes: '+miss.join(', '));
+  if(!lanes.length) throw new Error('add at least one segment');
+  const empty = lanes.findIndex(l=>!l.prompt.trim()); if(empty>=0) throw new Error('segment '+(empty+1)+' has no prompt');
+  const clause = $('dFirstClause').checked;
+  const firstInfo = slotDesc(slots.images[FIRST-1]);
+  if(clause && !(firstInfo && firstInfo.ok) && lanes.length) throw new Error('the first-frame hint is on but slot 9 (first frame) is empty — drop an image there or untick the hint');
+  const tagErrs = validateTags(); if(tagErrs.length) throw new Error(tagErrs.join('; '));
+  if($('dAuto').checked && lastHealth && lastHealth.openrouter_key===false) throw new Error('auto-prompt is on but the runner has no OpenRouter key (OPENROUTER_API_KEY / OPENROUTER_KEY / LLM_KEY in the instance env) — or untick auto-prompt');
+  const spec_slots = {images:[], videos:[], audios:[]};
+  for(const [k,arr] of Object.entries(slots)) for(let i=0;i<arr.length;i++){ const d=arr[i]; if(!d) continue; const info=slotDesc(d); if(!info||!info.ok) continue;
+    const e = {slot:i+1, src: await descToSrc(d)}; if(k==='videos') e.use_soundtrack = d.soundtrack!==false; spec_slots[k].push(e); }
+  const lk = locked(), lks = lockedSec();
+  const segments = lanes.map(l=>{
+    let p = l.prompt.trim();
+    if(clause && !/first frame/i.test(p)) p += (p.endsWith('.')?' ':'. ') + '<Picture 9> is the absolute first frame of the video.';
+    return {prompt:p, seconds: lks? +$('dSeconds').value : l.seconds, aspect: lk? $('dAspect').value : l.aspect, megapixels: lk? +$('dMp').value : l.mp,
+            seed: l.seed? +l.seed : null, loras:(l.loras||[]).filter(x=>x.name).map(x=>({name:x.name, strength:+(x.strength??0.85)}))};
+  });
+  return {
+    spec_version: 2,
+    name: ($('jobname').value.trim() || 'chain-'+new Date().toISOString().slice(0,16).replace(/[-:T]/g,'')).replace(/[^\w.-]+/g,'_'),
+    template, slots: spec_slots, segments, concat: $('dConcat').checked,
+    options:{ seed: $('dSeed').value? +$('dSeed').value : null, seed_mode:$('dSeedMode').value, fps:+$('dFps').value,
+              continuation: $('dCont').value, first_clause: clause,
+              auto_prompt:{enabled:$('dAuto').checked, model:$('dModel').value.trim()} },
+  };
+}
+async function go(){
+  try{
+    $('btnGo').disabled=true;
+    if(!template) throw new Error('load the API-format workflow first');
+    // pre-validate model filenames against the instance before building (base64) payloads
+    let m = null;
+    try{ m = await loadModels(true); }catch(e){ toast('could not list models from the runner ('+e.message+') — submitting without pre-validation', true); }
+    if(m){ const miss = findMissingModels(m); if(miss.length){ const ok = await showMissingModal(miss, m); if(!ok) throw new Error('cancelled: '+miss.map(x=>x.value).join(', ')+' missing on the instance'); } }
+    const spec = await buildSpec();
+    const j = await fetchJson(runnerUrl()+'/job',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(spec)});
+    jobId = j.job; LS.set('job', jobId); jobState=null; toast('Chain started: '+jobId); startPolling();
+  }catch(e){ toast(e.message, true); $('btnGo').disabled=false; }
+}
+$('btnGo').onclick = go;
+$('btnCancel').onclick = async ()=>{ if(!jobId) return; await fetch(runnerUrl()+'/job/'+jobId+'/cancel',{method:'POST'}).catch(()=>{}); toast('Cancelling after the current step…'); };
+
+// ─── monitoring ─────────────────────────────────────────────────────────────
+const mediaUrl = m => runnerUrl()+'/media?'+new URLSearchParams({f:m.filename, sub:m.subfolder||'', type:m.type||'output'});
+function startPolling(){ clearInterval(pollTimer); poll(); pollTimer=setInterval(poll, 2500); }
+async function poll(){
+  if(!jobId) return;
+  try{
+    const r = await fetch(runnerUrl()+'/job/'+jobId,{cache:'no-store'}); if(!r.ok){ if(r.status===404){ clearInterval(pollTimer); $('jstate').textContent='idle'; $('jstate').className='badge'; jobId=null; LS.set('job',null);} return; }
+    const j = await r.json(); const prevLast = JSON.stringify((jobState?.segments||[]).map(s=>s.lastframe+s.state)); jobState=j;
+    renderRun(j);
+    if(JSON.stringify(j.segments.map(s=>s.lastframe+s.state))!==prevLast) renderLanes();
+    if(['done','failed','cancelled'].includes(j.state)){ clearInterval(pollTimer); $('btnGo').disabled=false; $('btnCancel').disabled=true; }
+    else { $('btnGo').disabled=true; $('btnCancel').disabled=false; }
+  }catch(e){ $('jphase').textContent='(poll failed: '+e.message+')'; }
+}
+function renderRun(j){
+  $('jstate').textContent=j.state; $('jstate').className='badge '+j.state; $('jphase').textContent=j.phase||''; $('jid').textContent=j.id;
+  const done = j.segments.filter(s=>s.state==='done').length;
+  $('segdone').textContent=done+'/'+j.segments.length; $('barTotal').style.width=(100*done/Math.max(1,j.segments.length))+'%';
+  const p=j.progress||{};
+  if(p.steps){ $('barStep').style.width=(100*p.step/p.steps)+'%'; $('steptxt').textContent=p.step+'/'+p.steps+(p.node?' node '+p.node:''); }
+  else { $('barStep').style.width= j.state==='running'?'100%':'0'; $('barStep').style.opacity= j.state==='running'?.35:1; $('steptxt').textContent = p.node? 'node '+p.node : (j.state==='running'?'working':'—'); }
+  const base = j.started||j.created; const end = j.finished||Date.now()/1000;
+  $('elapsed').textContent = fmtT(Math.floor(end-base)) + (p.elapsed!=null && j.state==='running' ? '  (segment '+fmtT(p.elapsed)+')' : '');
+  $('log').textContent=(j.log||[]).slice(-60).join('\n'); $('log').scrollTop=$('log').scrollHeight;
+  const T=$('tiles'); T.innerHTML='';
+  j.segments.forEach((s,i)=>{
+    const tile=el('div',{class:'tile'});
+    let media;
+    if(s.video) media=el('video',{controls:'',preload:'metadata',src:mediaUrl(s.video)});
+    else if(s.state==='running') media=el('div',{class:'media'},'rendering…');
+    else media=el('div',{class:'media'},s.state);
+    if(s.video){ const w=el('div',{class:'media'}); w.append(media); media=w; }
+    const cap = el('div',{class:'cap'}, el('span',{},'segment '+(i+1)),
+      el('span',{class:'badge '+s.state}, s.state + (s.finished&&s.started? ' '+fmtT(Math.floor(s.finished-s.started)) : '')));
+    if(s.continuity_psnr!=null) cap.append(el('span',{class:'badge',title:'PSNR between the previous last frame and this segment\'s first decoded frame'}, (s.guided?'exact ':'')+s.continuity_psnr+' dB'));
+    if(s.direction || s.generated_prompt) cap.append(el('button',{class:'small',onclick:()=>showPrompt(i)},'prompt'));
+    tile.append(media, cap);
+    T.append(tile);
+  });
+  if(j.final && j.final.filename){
+    const tile=el('div',{class:'tile final'}); const w=el('div',{class:'media'}); w.append(el('video',{controls:'',preload:'metadata',src:mediaUrl(j.final)}));
+    tile.append(w, el('div',{class:'cap'}, el('span',{},'final'), el('a',{href:mediaUrl(j.final),download:j.final.filename},'download')));
+    T.append(tile);
+  } else if(j.final && j.final.note){ T.append(el('div',{class:'dim small'}, j.final.note)); }
+  if(j.error) T.append(el('div',{class:'small',style:'color:var(--red);padding:6px'}, j.error));
+}
+
+// ─── generated prompt modal (F5) ────────────────────────────────────────────
+let pmSeg = null;
+function showPrompt(i){
+  const s = jobState?.segments?.[i]; if(!s) return; pmSeg = s;
+  $('pmTitle').textContent = 'segment '+(i+1)+' prompt';
+  $('pmDirection').textContent = s.direction || s.prompt || '';
+  $('pmGenerated').textContent = s.generated_prompt || (s.state==='done' ? '(no generated prompt — auto-prompt was off, so the direction went through verbatim)' : '(not available yet)');
+  $('pmRefs').textContent = (s.references||[]).map(r=>r.slot_tag+'→'+r.tag+(r.soundtrack_tag?' (+'+r.soundtrack_tag+')':'')+' '+(r.label||r.file)).join('  ·  ');
+  $('pmSave').disabled = !s.generated_prompt;
+  $('promptModal').classList.add('show');
+}
+$('pmClose').onclick = ()=>$('promptModal').classList.remove('show');
+$('pmSave').onclick = ()=>{ if(!pmSeg?.generated_prompt) return; pool.unshift({id:uid(), name:'generated · seg '+(pmSeg.index+1), text:pmSeg.generated_prompt, loras:JSON.parse(JSON.stringify(pmSeg.loras||[]))}); savePool(); renderPool(); toast('Saved to the prompt pool'); };
+$('pmSaveDir').onclick = ()=>{ if(!pmSeg) return; pool.unshift({id:uid(), name:'direction · seg '+(pmSeg.index+1), text:pmSeg.direction||pmSeg.prompt||'', loras:JSON.parse(JSON.stringify(pmSeg.loras||[]))}); savePool(); renderPool(); toast('Saved to the prompt pool'); };
+for(const id of ['promptModal','missingModal']) $(id).addEventListener('click', e=>{ if(e.target.id===id && id==='promptModal') $(id).classList.remove('show'); });
+
+// ─── project save / open ────────────────────────────────────────────────────
+$('btnSave').onclick = async ()=>{
+  const used = new Set(); forEachSlot((arr,i,d)=>{ if(d && d.kind==='local') used.add(d.id); });
+  const refsOut = []; for(const r of refs) if(used.has(r.id)) refsOut.push({id:r.id,name:r.name,kind:r.kind,type:r.blob.type,data:await blobToB64(r.blob)});
+  const proj = {v:2, pool, lanes, slots, defaults:LS.get('defaults',{}), templateName, template, refs:refsOut};
+  const a = el('a',{href:URL.createObjectURL(new Blob([JSON.stringify(proj)],{type:'application/json'})), download:($('jobname').value||'mmx-project')+'.json'}); a.click();
+  toast('Project saved (local refs in use included)');
+};
+$('btnLoad').onclick = ()=>$('projFile').click();
+$('projFile').onchange = async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  try{
+    const p=JSON.parse(await f.text());
+    for(const r of p.refs||[]){ if(!refById(r.id)){ const blob=b64ToBlob(r.data,r.type||'image/png'); const o={id:r.id,name:r.name,kind:r.kind||kindOf(r.type||'',r.name)||'image',blob}; await hydrateRef(o); refs.push(o); await DB.put({id:o.id,name:o.name,kind:o.kind,blob}).catch(()=>{}); } }
+    pool=(p.pool||pool).map(x=>({...x,loras:x.loras||[]})); lanes=(p.lanes||lanes).map(x=>({...x,loras:x.loras||[]}));
+    if(p.slots) slots=p.slots; else if(p.idslots||p.first){ slots={images:Array(N_IMG).fill(null),videos:Array(N_VID).fill(null),audios:Array(N_AUD).fill(null)}; (p.idslots||[]).forEach((id,i)=>{ if(id&&i<8) slots.images[i]={kind:'local',id}; }); if(p.first) slots.images[FIRST-1]={kind:'local',id:p.first}; }
+    if(p.template){ template=p.template; if(template['193']?.inputs?.value) template['193'].inputs.value=''; templateName=p.templateName||'project workflow'; LS.set('template',template); LS.set('templateName',templateName); }
+    if(p.defaults){ LS.set('defaults',p.defaults); for(const [k,v] of Object.entries(p.defaults)){ const n=$(k); if(!n) continue; if(n.type==='checkbox') n.checked=v; else n.value=v; } }
+    savePool(); saveLanes(); persistSlots(); renderRefs(); renderSlots(); renderTemplate(); toast('Project opened');
+  }catch(err){ toast('Could not open project: '+err.message, true); }
+  e.target.value='';
+};
+
+// ─── test hooks (used by the playwright test; harmless otherwise) ───────────
+window.mmx = {
+  get slots(){ return slots; }, get lanes(){ return lanes; }, get pool(){ return pool; }, get models(){ return models; }, get library(){ return library; }, get job(){ return jobState; }, get template(){ return template; },
+  setSlot, setLane(i, patch){ Object.assign(lanes[i], patch); saveLanes(); renderLanes(); }, validateTags, buildSpec, refreshAll, go, renderSlots,
+  refs(){ return refs.map(r=>({id:r.id,name:r.name,kind:r.kind})); },
+  simulateDrag(payload, target){ dragPayload = payload; target.dispatchEvent(new DragEvent('dragover',{bubbles:true,cancelable:true})); target.dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true})); dragPayload=null; },
+};
+
+// ─── boot ───────────────────────────────────────────────────────────────────
+(async ()=>{
+  try{ await DB.open(); const rows=await DB.all(); refs=[]; for(const r of rows){ refs.push(r); await hydrateRef(r); } }catch(e){ toast('Reference library will not persist (IndexedDB blocked); use Save project instead', true); }
+  renderRefs(); renderSlots(); renderTemplate(); health(); setInterval(health, 15000);
+  loadModels(false).then(()=>{ renderPool(); renderLanes(); }).catch(()=>{});
+  for(const L of LIBS) loadLibrary(L.key, false);
+  if(jobId) startPolling();
+})();
+</script>
+</body>
+</html>

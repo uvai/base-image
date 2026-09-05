@@ -129,3 +129,46 @@ if [ -n "$CUI" ]; then
 else
     echo "[additional_params] WARN: no ComfyUI main.py found — manager/refpack skipped"
 fi
+
+# ── 4. mmx runner (headless MiniMax studio backend, port 8190) ───────────────
+# Fetched from this repo's main so the studio's canonical backend rides with
+# the provisioning script; the runner inherits the Vast template env here
+# (OPENROUTER_KEY lives there) and replaces any predecessor itself (pidfile +
+# /proc scan — no fuser/lsof on this image). The supervisor loop restarts it
+# after a crash; a re-run of this script just starts a second loop whose
+# runner evicts the first, and the orphaned loop dies on its next iteration
+# because a healthy runner refuses to be replaced by an identical version.
+MMX_RAW="https://raw.githubusercontent.com/uvai/base-image/main/derivatives/pytorch/derivatives/comfyui/provisioning_scripts/mmx/mmx_runner.py"
+if curl -fsSL "$MMX_RAW" -o /workspace/mmx_runner.py.new \
+   && python3 -c "import ast,sys; ast.parse(open('/workspace/mmx_runner.py.new').read())" 2>/dev/null; then
+    mv -f /workspace/mmx_runner.py.new /workspace/mmx_runner.py
+    echo "[additional_params] mmx_runner.py fetched"
+else
+    rm -f /workspace/mmx_runner.py.new
+    echo "[additional_params] WARN: mmx_runner.py fetch failed$( [ -f /workspace/mmx_runner.py ] && echo ' — keeping existing copy')"
+fi
+if [ -f /workspace/mmx_runner.py ]; then
+    cat > /root/mmx_supervise.sh <<'MEOF'
+#!/usr/bin/env bash
+# mmx_supervise.sh — keep mmx_runner.py alive. Written by additional_params.sh.
+# One loop per boot: a second copy exits as soon as it sees another loop alive.
+LOCK=/workspace/mmx_supervise.pid
+if [ -f "$LOCK" ] && kill -0 "$(cat "$LOCK")" 2>/dev/null && [ "$(cat "$LOCK")" != "$$" ]; then
+    exit 0
+fi
+echo $$ > "$LOCK"
+cd /workspace
+while true; do
+    echo "=== mmx_runner start $(date -u +%FT%TZ) ===" >> /workspace/mmx_runner.log
+    python3 /workspace/mmx_runner.py >> /workspace/mmx_runner.log 2>&1
+    echo "=== mmx_runner exited rc=$? $(date -u +%FT%TZ) ===" >> /workspace/mmx_runner.log
+    sleep 3
+done
+MEOF
+    chmod +x /root/mmx_supervise.sh
+    # export the key under the name the runner reads first, whichever the
+    # template used; the runner itself also falls back through all three
+    export OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-${OPENROUTER_KEY:-${LLM_KEY:-}}}"
+    setsid nohup /root/mmx_supervise.sh >/dev/null 2>&1 < /dev/null &
+    echo "[additional_params] mmx runner supervisor detached (pid $!; log: /workspace/mmx_runner.log)"
+fi

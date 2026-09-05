@@ -1,0 +1,1140 @@
+#!/usr/bin/env bash
+# vgo — Vast.ai MiniMax helper. v21: mmx studio v2 — forwards the mmx runner (8190)
+# wherever 8188 is forwarded, `vgo studio` ensures the forward and opens
+# ~/.local/share/mmx/mmx_studio.html, and the dashboard header shows the runner
+# (up / key loaded) from localhost:8190/health on the instance. v20: built-in instance terminal card (xterm.js over
+# a hand-rolled websocket -> pty ssh, rides the ControlMaster socket) replaces the
+# extra_models.log card; boot pane tails onstart+provisioning+minimax logs so early
+# boot is visible; boot card shortened, terminal takes the space. v20.1: xterm assets from jsdelivr (cdnjs has no 5.x). v19.2: extra-model (hf/tqdm) downloads join the progress card. v19.1: boot cost uses container age (pid1 etimes), not host /proc/uptime. v19: boot cost (spent/to-go) + stall warning in header. v18.3: direct probe + relay fallback, multi-candidate tailnet. v18.2: human ETAs, computed summary, table lines removed from boot pane. v18.1: parsed download progress bars. v18: single-viewport dashboard grid. v17.2: self-contained sync worker for restarts (never re-runs mmx setup). v17.1: detached Drive deps install, dead-worker auto-restart on check, concise errors. v17: encrypted-share lock controls (dot + unlock/lock, subgenula mechanism), v16.4 restart-path fix. v16.3: stable live panes. v16.2: ssh multiplexing for polls, in-flight guards. v16.1: quiet EPIPE, robust serve activation. v16: tailnet-first ComfyUI path (ssh tunnel fallback). v15: direct-connect preference, tunnel keepalives, verify-before-reuse. v14: balance/burn/runway header. v13: NAS transfer check + sync-now. v12: adds "restart ComfyUI" button. v11: LoRAs pane lists a Google Drive folder
+# (VGO_DRIVE_FOLDER, default = the mmx loras folder) with checkboxes; tick and
+# "Download selected", or "Download all". The INSTANCE does the pulling — it
+# authenticates with the template's GDRIVE_CREDENTIALS_B64 service account and
+# writes straight into /workspace/ComfyUI/models/loras (.part + rename).
+# The Drive folder must be shared with the service account's email.
+#   vgo            SSH in with tunnels (interactive)
+#   vgo dash       tunnels + live dashboard; auto-opens ComfyUI when up.
+#   vgo tunnel     background tunnels only
+#   vgo logs       tail boot log
+#   vgo comfy      tail ComfyUI log
+#   vgo status     one-shot status in terminal
+#   vgo ip         print host/port
+#   vgo studio     ensure the 8190 forward and open the mmx studio page
+#
+# Requires: vastai CLI with api-key. Drive pulls require GDRIVE_CREDENTIALS_B64
+# in the instance env (it's in the Vast template).
+
+set -euo pipefail
+
+DASH_PORT=8189
+# Google Drive folder holding the LoRAs (folder id from the drive.google.com URL)
+DRIVE_FOLDER="${VGO_DRIVE_FOLDER:-1n9zGTSgD7ge_Ee6qWDTwvGaZwLZms4w9}"
+
+read -r HOST PORT ID RHOST RPORT <<< "$(vastai show instances --raw | python3 -c '
+import json,sys
+inst=[i for i in json.load(sys.stdin) if i.get("actual_status")=="running"]
+sys.exit("no running instances") if not inst else None
+i=inst[0]
+# prefer the direct host connection over the vast ssh relay — relays have been
+# observed (2026-08-22) accepting short sessions while silently killing
+# long-lived forwards, which presents as an eternal ComfyUI splash screen.
+rhost, rport = i["ssh_host"], i["ssh_port"]
+host, port = rhost, rport
+ip = i.get("public_ipaddr")
+p22 = (i.get("ports") or {}).get("22/tcp") or []
+if ip and p22 and p22[0].get("HostPort"):
+    host, port = ip, p22[0]["HostPort"]
+print(host, port, i["id"], rhost, rport)
+')"
+
+# a "direct" 22/tcp mapping is sometimes dead on arrival (banner timeout,
+# 2026-08-30) — probe it and fall back to the relay rather than hanging.
+if [ "$HOST" != "$RHOST" ]; then
+    if ! ssh -p "$PORT" -o ConnectTimeout=6 -o BatchMode=yes \
+            -o StrictHostKeyChecking=accept-new root@"$HOST" true 2>/dev/null; then
+        echo "[vgo] direct $HOST:$PORT unreachable — falling back to relay" >&2
+        HOST="$RHOST"; PORT="$RPORT"
+    fi
+fi
+echo "[vgo] instance $ID -> $HOST:$PORT" >&2
+SSHOPTS=(-p "$PORT" -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10
+         -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
+
+case "${1:-shell}" in
+  shell)  exec ssh "${SSHOPTS[@]}" root@"$HOST" -L 8188:127.0.0.1:8188 -L 8190:127.0.0.1:8190 -L 7681:127.0.0.1:7681 ;;
+  tunnel) exec ssh "${SSHOPTS[@]}" root@"$HOST" -fN -L 8188:127.0.0.1:8188 -L 8190:127.0.0.1:8190 -L 7681:127.0.0.1:7681 ;;
+  logs)   exec ssh "${SSHOPTS[@]}" root@"$HOST" -t 'tail -f /workspace/minimax_boot.log' ;;
+  comfy)  exec ssh "${SSHOPTS[@]}" root@"$HOST" -t 'tail -f /workspace/comfyui_*_nohup.log' ;;
+  status) exec ssh "${SSHOPTS[@]}" root@"$HOST" 'du -sh /workspace/ComfyUI/models/* 2>/dev/null; curl -sf http://127.0.0.1:8188 >/dev/null && echo "ComfyUI: UP" || echo "ComfyUI: not yet"' ;;
+  ip)     echo "$HOST $PORT"; exit 0 ;;
+  studio)
+    # mmx studio: the page talks to localhost:8190 (runner on the instance). Reuse a
+    # live forward, replace a dead one, else open a fresh best-effort tunnel.
+    STUDIO="${VGO_STUDIO:-$HOME/.local/share/mmx/mmx_studio.html}"
+    if ! curl -sf -o /dev/null --max-time 3 http://127.0.0.1:8190/health; then
+        if lsof -nP -iTCP:8190 -sTCP:LISTEN >/dev/null 2>&1; then
+            echo "[vgo] stale forward on 8190 — replacing" >&2
+            pkill -f 'ssh.*-L 8190' 2>/dev/null; sleep 1
+        fi
+        ssh "${SSHOPTS[@]}" -o ExitOnForwardFailure=yes root@"$HOST" -fN -L 8190:127.0.0.1:8190 \
+            && echo "[vgo] runner forward opened (8190)" >&2 \
+            || echo "[vgo] WARN: could not forward 8190 (is another vgo holding it?)" >&2
+    fi
+    if curl -sf --max-time 4 http://127.0.0.1:8190/health >/tmp/vgo_mmx_health.json 2>/dev/null; then
+        python3 - <<'PY' </tmp/vgo_mmx_health.json
+import json,sys
+h=json.load(sys.stdin)
+print("[vgo] runner v%s: comfy %s, openrouter key %s" % (h.get("version","?"), "up" if h.get("comfy") else "not yet", "loaded" if h.get("openrouter_key") else "MISSING"), file=sys.stderr)
+PY
+    else
+        echo "[vgo] runner not answering on 8190 yet (instance still provisioning?) — the page will show it red until it is" >&2
+    fi
+    [ -f "$STUDIO" ] || { echo "[vgo] studio page not found: $STUDIO" >&2; echo "      install: mkdir -p ~/.local/share/mmx && curl -fsSL https://raw.githubusercontent.com/uvai/base-image/main/derivatives/pytorch/derivatives/comfyui/provisioning_scripts/mmx/mmx_studio.html -o \"$STUDIO\"" >&2; exit 1; }
+    if command -v open >/dev/null 2>&1; then open "$STUDIO"; else xdg-open "$STUDIO" 2>/dev/null || echo "$STUDIO"; fi
+    exit 0 ;;
+  dash)   ;;
+  *)      echo "usage: vgo [shell|dash|tunnel|logs|comfy|status|ip|studio]" >&2; exit 1 ;;
+esac
+
+# ---------------- dash mode ----------------
+# Prefer the tailnet for the browser-facing ComfyUI path: WireGuard survives
+# NATs that kill long-lived ssh forwards (India, 2026-08-22). ssh tunnels
+# remain the fallback and still carry the ttyd terminal.
+# dead instances leave stale mmx-vast nodes behind — try every candidate
+# that isn't marked offline instead of trusting the first line (2026-08-30).
+TS_IPS=$(tailscale status 2>/dev/null | awk '/mmx-vast/ && $0 !~ /offline/{print $1}')
+COMFY_URL="http://localhost:8188"
+for TS_IP in $TS_IPS; do
+    if curl -sf -o /dev/null --max-time 3 "http://$TS_IP:8188/"; then
+        COMFY_URL="http://$TS_IP:8188"
+        echo "[vgo] tailnet path live: $COMFY_URL" >&2
+        break
+    else
+        # userspace tailscaled proxies outbound only; ask it to serve inbound.
+        # serve syntax shifted across tailscale versions — try both, log result.
+        ssh "${SSHOPTS[@]}" root@"$HOST" \
+            'tailscale serve --bg --tcp 8188 tcp://127.0.0.1:8188 \
+             || tailscale serve --bg --tcp=8188 tcp://127.0.0.1:8188 \
+             || echo "serve failed: $(tailscale version | head -1)"' \
+            > /tmp/vgo_serve.log 2>&1 || true
+        for _try in 1 2; do
+            sleep 2
+            if curl -sf -o /dev/null --max-time 3 "http://$TS_IP:8188/"; then
+                COMFY_URL="http://$TS_IP:8188"; break
+            fi
+        done
+        if [ "$COMFY_URL" != "http://localhost:8188" ]; then
+            echo "[vgo] tailnet path live (serve activated): $COMFY_URL" >&2
+            break
+        fi
+    fi
+done
+if [ -n "$TS_IPS" ] && [ "$COMFY_URL" = "http://localhost:8188" ]; then
+    echo "[vgo] tailnet node(s) found but 8188 unreachable on all — using ssh tunnel" >&2
+    echo "[vgo]   (serve attempt log: /tmp/vgo_serve.log)" >&2
+fi
+
+# Never trust an existing forward blindly: a dead ssh session keeps the local
+# port open while returning nothing (the 2026-08-22 eternal-splash bug).
+# Probe through it; on failure, kill the squatter and open fresh.
+TUNNEL_OK=""
+if lsof -nP -iTCP:8188 -sTCP:LISTEN >/dev/null 2>&1; then
+    if curl -sf -o /dev/null --max-time 3 http://127.0.0.1:8188/ \
+       || curl -sf -o /dev/null --max-time 3 http://127.0.0.1:8188/system_stats; then
+        echo "[vgo] port 8188 already forwarded and answering — reusing" >&2
+        TUNNEL_OK=1
+    else
+        echo "[vgo] stale forward on 8188 (listening but dead) — replacing" >&2
+        pkill -f 'ssh.*-L 8188' 2>/dev/null; sleep 1
+    fi
+fi
+if [ -z "$TUNNEL_OK" ]; then
+    if [ "$COMFY_URL" = "http://localhost:8188" ]; then
+        ssh "${SSHOPTS[@]}" -o ExitOnForwardFailure=yes root@"$HOST" -fN \
+            -L 8188:127.0.0.1:8188 -L 8190:127.0.0.1:8190 -L 7681:127.0.0.1:7681
+        echo "[vgo] tunnels opened (8188, 8190, 7681)" >&2
+    else
+        # tailnet carries ComfyUI; tunnel is best-effort for the ttyd terminal only
+        ssh "${SSHOPTS[@]}" root@"$HOST" -fN -L 7681:127.0.0.1:7681 -L 8190:127.0.0.1:8190 2>/dev/null \
+            || ssh "${SSHOPTS[@]}" root@"$HOST" -fN -L 8190:127.0.0.1:8190 2>/dev/null || true
+        echo "[vgo] terminal + runner tunnels opened (7681, 8190, best-effort)" >&2
+    fi
+fi
+
+export VGO_HOST="$HOST" VGO_PORT="$PORT" VGO_ID="$ID" VGO_DASH_PORT="$DASH_PORT"
+export VGO_COMFY_URL="$COMFY_URL"
+export VGO_DRIVE_FOLDER="$DRIVE_FOLDER"
+exec python3 - <<'PYEOF'
+import http.server, subprocess, os, json, threading, webbrowser, shlex, urllib.parse, time
+import base64, hashlib, struct, select, pty, fcntl, termios
+
+HOST, PORT = os.environ["VGO_HOST"], os.environ["VGO_PORT"]
+ID, DASH_PORT = os.environ["VGO_ID"], int(os.environ["VGO_DASH_PORT"])
+DRIVE_FOLDER = os.environ["VGO_DRIVE_FOLDER"]
+COMFY_URL = os.environ.get("VGO_COMFY_URL", "http://localhost:8188")
+SSH = ["ssh", "-p", PORT, "-o", "StrictHostKeyChecking=accept-new",
+       "-o", "ConnectTimeout=8",
+       # multiplex all polls over ONE persistent connection: at high RTT,
+       # per-poll ssh handshakes pile up and sshd MaxStartups drops the burst
+       # (empty dashboard panes, India 2026-08-23)
+       "-o", "ControlMaster=auto",
+       "-o", "ControlPath=/tmp/vgo_cm_%r@%h:%p",
+       "-o", "ControlPersist=300",
+       "-o", "ServerAliveInterval=15",
+       f"root@{HOST}"]
+
+# Instance-side Drive helper (list/download), shipped as base64 and installed
+# to /root/vgo_drive.py on first use. Auth = /workspace/gdrive_auth.json,
+# decoded from the template's GDRIVE_CREDENTIALS_B64.
+DRIVE_HELPER_B64 = "IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwojIHZnb19kcml2ZS5weSDigJQgaW5zdGFuY2Utc2lkZSBHb29nbGUgRHJpdmUgbG9yYSBsaXN0ZXIvZG93bmxvYWRlciBmb3IgdmdvIGRhc2guCiMgQXV0aDogc2VydmljZSBhY2NvdW50IGF0IC93b3Jrc3BhY2UvZ2RyaXZlX2F1dGguanNvbiAoZGVjb2RlZCBmcm9tIHRoZQojIHRlbXBsYXRlJ3MgR0RSSVZFX0NSRURFTlRJQUxTX0I2NCkuIFRoZSB0YXJnZXQgZm9sZGVyIG11c3QgYmUgc2hhcmVkIHdpdGggdGhlCiMgc2VydmljZSBhY2NvdW50IGVtYWlsLiBXcml0dGVuIHRvIHRoZSBpbnN0YW5jZSBieSB2Z28gb24gZmlyc3QgZGFzaCB1c2UuCmltcG9ydCBvcywgc3lzLCBqc29uCmZyb20gZ29vZ2xlYXBpY2xpZW50LmRpc2NvdmVyeSBpbXBvcnQgYnVpbGQKZnJvbSBnb29nbGVhcGljbGllbnQuaHR0cCBpbXBvcnQgTWVkaWFJb0Jhc2VEb3dubG9hZApmcm9tIGdvb2dsZS5vYXV0aDIuc2VydmljZV9hY2NvdW50IGltcG9ydCBDcmVkZW50aWFscwoKQVVUSCA9ICIvd29ya3NwYWNlL2dkcml2ZV9hdXRoLmpzb24iClRBUkdFVCA9ICIvd29ya3NwYWNlL0NvbWZ5VUkvbW9kZWxzL2xvcmFzIgpTQ09QRVMgPSBbImh0dHBzOi8vd3d3Lmdvb2dsZWFwaXMuY29tL2F1dGgvZHJpdmUucmVhZG9ubHkiXQpFWFRTID0gKCIuc2FmZXRlbnNvcnMiLCAiLnB0IiwgIi5ja3B0IikKCmRlZiBzdmMoKToKICAgIGNyZWRzID0gQ3JlZGVudGlhbHMuZnJvbV9zZXJ2aWNlX2FjY291bnRfZmlsZShBVVRILCBzY29wZXM9U0NPUEVTKQogICAgcmV0dXJuIGJ1aWxkKCJkcml2ZSIsICJ2MyIsIGNyZWRlbnRpYWxzPWNyZWRzKQoKZGVmIHNhX2VtYWlsKCk6CiAgICB0cnk6IHJldHVybiBqc29uLmxvYWQob3BlbihBVVRIKSkuZ2V0KCJjbGllbnRfZW1haWwiLCAiPyIpCiAgICBleGNlcHQgRXhjZXB0aW9uOiByZXR1cm4gIj8iCgpkZWYgbGlzdF9mb2xkZXIocywgZmlkKToKICAgIGZpbGVzLCB0b2sgPSBbXSwgTm9uZQogICAgd2hpbGUgVHJ1ZToKICAgICAgICByID0gcy5maWxlcygpLmxpc3QoCiAgICAgICAgICAgIHE9ZiIne2ZpZH0nIGluIHBhcmVudHMgYW5kIHRyYXNoZWQ9ZmFsc2UiLAogICAgICAgICAgICBmaWVsZHM9Im5leHRQYWdlVG9rZW4sIGZpbGVzKGlkLG5hbWUsc2l6ZSxtaW1lVHlwZSkiLAogICAgICAgICAgICBwYWdlU2l6ZT0xMDAwLCBwYWdlVG9rZW49dG9rLAogICAgICAgICAgICBzdXBwb3J0c0FsbERyaXZlcz1UcnVlLCBpbmNsdWRlSXRlbXNGcm9tQWxsRHJpdmVzPVRydWUpLmV4ZWN1dGUoKQogICAgICAgIGZpbGVzICs9IHIuZ2V0KCJmaWxlcyIsIFtdKQogICAgICAgIHRvayA9IHIuZ2V0KCJuZXh0UGFnZVRva2VuIikKICAgICAgICBpZiBub3QgdG9rOiBicmVhawogICAgcmV0dXJuIFtmIGZvciBmIGluIGZpbGVzCiAgICAgICAgICAgIGlmIGYuZ2V0KCJtaW1lVHlwZSIpICE9ICJhcHBsaWNhdGlvbi92bmQuZ29vZ2xlLWFwcHMuZm9sZGVyIgogICAgICAgICAgICBhbmQgZlsibmFtZSJdLmxvd2VyKCkuZW5kc3dpdGgoRVhUUyldCgpkZWYgY21kX2xpc3QoZmlkKToKICAgIHMgPSBzdmMoKQogICAgZmlsZXMgPSBsaXN0X2ZvbGRlcihzLCBmaWQpCiAgICBvdXQgPSBbeyJpZCI6IGZbImlkIl0sICJuYW1lIjogZlsibmFtZSJdLAogICAgICAgICAgICAiYnl0ZXMiOiBpbnQoZi5nZXQoInNpemUiLCAwKSBvciAwKSwKICAgICAgICAgICAgInNpemUiOiBmIntpbnQoZi5nZXQoJ3NpemUnLDApIG9yIDApLy8oMTAyNCoxMDI0KX1NQiJ9CiAgICAgICAgICAgZm9yIGYgaW4gZmlsZXNdCiAgICBwcmludChqc29uLmR1bXBzKHsibG9yYXMiOiBvdXQsICJzYSI6IHNhX2VtYWlsKCl9KSkKCmRlZiBkb3dubG9hZF9vbmUocywgZmlkLCBuYW1lKToKICAgIG9zLm1ha2VkaXJzKFRBUkdFVCwgZXhpc3Rfb2s9VHJ1ZSkKICAgIGRlc3QgPSBvcy5wYXRoLmpvaW4oVEFSR0VULCBuYW1lKQogICAgdG1wID0gZGVzdCArICIucGFydCIKICAgIHdpdGggb3Blbih0bXAsICJ3YiIpIGFzIGZoOgogICAgICAgIGRsID0gTWVkaWFJb0Jhc2VEb3dubG9hZChmaCwgcy5maWxlcygpLmdldF9tZWRpYShmaWxlSWQ9ZmlkKSwKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgY2h1bmtzaXplPTE2ICogMTAyNCAqIDEwMjQpCiAgICAgICAgZG9uZSA9IEZhbHNlCiAgICAgICAgd2hpbGUgbm90IGRvbmU6CiAgICAgICAgICAgIF8sIGRvbmUgPSBkbC5uZXh0X2NodW5rKCkKICAgIG9zLnJlcGxhY2UodG1wLCBkZXN0KQoKZGVmIGNtZF9nZXQoZmlkLCBpZHMpOgogICAgcyA9IHN2YygpCiAgICBmaWxlcyA9IGxpc3RfZm9sZGVyKHMsIGZpZCkKICAgIGJ5X2lkID0ge2ZbImlkIl06IGYgZm9yIGYgaW4gZmlsZXN9CiAgICB0YXJnZXRzID0gZmlsZXMgaWYgaWRzID09ICJhbGwiIGVsc2UgW2J5X2lkW2ldIGZvciBpIGluIGlkcy5zcGxpdCgiLCIpIGlmIGkgaW4gYnlfaWRdCiAgICBmb3IgZiBpbiB0YXJnZXRzOgogICAgICAgIGRlc3QgPSBvcy5wYXRoLmpvaW4oVEFSR0VULCBmWyJuYW1lIl0pCiAgICAgICAgYiA9IGludChmLmdldCgic2l6ZSIsIDApIG9yIDApCiAgICAgICAgaWYgb3MucGF0aC5leGlzdHMoZGVzdCkgYW5kIGIgYW5kIG9zLnBhdGguZ2V0c2l6ZShkZXN0KSA9PSBiOgogICAgICAgICAgICBwcmludChmInNraXAge2ZbJ25hbWUnXX0iLCBmbHVzaD1UcnVlKTsgY29udGludWUKICAgICAgICB0cnk6CiAgICAgICAgICAgIHByaW50KGYiZ2V0IHtmWyduYW1lJ119IiwgZmx1c2g9VHJ1ZSkKICAgICAgICAgICAgZG93bmxvYWRfb25lKHMsIGZbImlkIl0sIGZbIm5hbWUiXSkKICAgICAgICAgICAgcHJpbnQoZiJkb25lIHtmWyduYW1lJ119IiwgZmx1c2g9VHJ1ZSkKICAgICAgICBleGNlcHQgRXhjZXB0aW9uIGFzIGU6CiAgICAgICAgICAgIHByaW50KGYiRkFJTCB7ZlsnbmFtZSddfToge2V9IiwgZmx1c2g9VHJ1ZSkKICAgICAgICAgICAgdHJ5OiBvcy5yZW1vdmUoZGVzdCArICIucGFydCIpCiAgICAgICAgICAgIGV4Y2VwdCBPU0Vycm9yOiBwYXNzCgppZiBfX25hbWVfXyA9PSAiX19tYWluX18iOgogICAgYyA9IHN5cy5hcmd2WzFdIGlmIGxlbihzeXMuYXJndikgPiAxIGVsc2UgIiIKICAgIGlmIGMgPT0gImxpc3QiOiBjbWRfbGlzdChzeXMuYXJndlsyXSkKICAgIGVsaWYgYyA9PSAiZ2V0IjogY21kX2dldChzeXMuYXJndlsyXSwgc3lzLmFyZ3ZbM10pCiAgICBlbHNlOiBzeXMuZXhpdCgidXNhZ2U6IHZnb19kcml2ZS5weSBsaXN0IDxmb2xkZXI+IHwgZ2V0IDxmb2xkZXI+IDxpZHN8YWxsPiIpCg=="
+
+REMOTE_STATUS = r'''
+echo "===MODELS==="; du -sh /workspace/ComfyUI/models/* 2>/dev/null
+echo "===COMFY==="; curl -sf -o /dev/null http://127.0.0.1:8188 && echo UP || echo DOWN
+echo "===GPU==="; nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader 2>/dev/null
+echo "===INSTLORAS==="; ls -1 /workspace/ComfyUI/models/loras 2>/dev/null
+echo "===XFER==="; find /workspace/ComfyUI/models/loras -maxdepth 1 -name "*.part*" -exec stat -c "%n %s" {} + 2>/dev/null
+echo "===NAS==="; tail -n 5 /workspace/nas_sync.log 2>/dev/null | grep -v '^ *$' || echo "(nas sync not active)"
+echo "===UPTIME==="; ps -o etimes= -p 1 2>/dev/null | tr -d " "
+echo "===MMX==="; curl -sf --max-time 3 http://127.0.0.1:8190/health 2>/dev/null || echo DOWN
+echo "===LOG==="; cat /var/log/onstart.log /var/log/portal/provisioning.log /workspace/minimax_boot.log 2>/dev/null | tail -n 200 | tr "\r" "\n" | sed -E "s/\x1b\[[0-9;]*[A-Za-z]//g" | grep -v "^ *$" | tail -n 30 || echo "(boot log not created yet)"
+'''
+
+REMOTE_LOGS = r'''
+echo "===LOG==="; cat /var/log/onstart.log /var/log/portal/provisioning.log /workspace/minimax_boot.log 2>/dev/null | tail -n 600 | tr "\r" "\n" | sed -E "s/\x1b\[[0-9;]*[A-Za-z]//g" | grep -v "^ *$" | uniq | tail -n 40 || echo "(boot log not created yet)"
+echo "===XLOG==="; tail -n 400 /workspace/extra_models.log 2>/dev/null | tr "\r" "\n" | sed -E "s/\x1b\[[0-9;]*[A-Za-z]//g" | grep -v "^ *$" | uniq | tail -n 40 || echo "(no extra-model downloads)"
+echo "===PULL==="; tail -n 20 /tmp/lora_pull.log 2>/dev/null | grep -v "^ *$" || echo "(no lora pulls yet)"
+'''
+
+def parse_sections(out):
+    sec, cur = {}, None
+    for line in out.splitlines():
+        if line.startswith("===") and line.endswith("==="):
+            cur = line.strip("="); sec[cur] = []
+        elif cur is not None:
+            sec[cur].append(line)
+    return sec
+
+state = {"opened_comfy": False, "drive_loras": None, "drive_err": None, "helper_ready": False}
+
+def run_ssh(cmd, timeout=25, stdin_data=None):
+    return subprocess.run(SSH + [cmd], capture_output=True, text=True,
+                          timeout=timeout, input=stdin_data).stdout
+
+def poll():
+    try:
+        out = run_ssh(REMOTE_STATUS)
+    except Exception as e:
+        return {"ERR": [str(e)]}
+    return parse_sections(out)
+
+def ensure_helper():
+    """Idempotently install Drive deps, decode creds from PID1 env, ship helper."""
+    if state["helper_ready"]:
+        return
+    # pip can exceed any reasonable ssh timeout on a slow host (2026-08-30):
+    # run it DETACHED behind a marker; report DEPS_INSTALLING until it lands.
+    setup = (
+        "if [ ! -f /root/.vgo_gdeps ]; then "
+        "if [ ! -f /tmp/.vgo_gdeps_running ]; then touch /tmp/.vgo_gdeps_running; "
+        "setsid nohup bash -c 'pip install -q google-api-python-client google-auth "
+        ">/tmp/vgo_pip.log 2>&1 && touch /root/.vgo_gdeps; rm -f /tmp/.vgo_gdeps_running' "
+        ">/dev/null 2>&1 < /dev/null & fi; echo DEPS_INSTALLING; fi; "
+        "test -f /workspace/gdrive_auth.json || { "
+        "tr '\\0' '\\n' </proc/1/environ | grep ^GDRIVE_CREDENTIALS_B64= | cut -d= -f2- "
+        "| base64 -d > /workspace/gdrive_auth.json && chmod 600 /workspace/gdrive_auth.json; }; "
+        f"echo {DRIVE_HELPER_B64} | base64 -d > /root/vgo_drive.py; "
+        "test -s /workspace/gdrive_auth.json && echo HELPER_OK || echo NO_CREDS"
+    )
+    try:
+        out = run_ssh(setup, timeout=45)
+    except Exception:
+        raise RuntimeError("instance unreachable while preparing Drive helper — retry refresh")
+    if "NO_CREDS" in out:
+        raise RuntimeError("GDRIVE_CREDENTIALS_B64 not in instance env (check Vast template)")
+    if "DEPS_INSTALLING" in out:
+        raise RuntimeError("installing Google Drive libraries on the instance — refresh in a minute")
+    state["helper_ready"] = True
+
+def fetch_drive_loras():
+    """List the Drive folder via the instance-side helper."""
+    try:
+        ensure_helper()
+        try:
+            out = run_ssh(f"python3 /root/vgo_drive.py list {shlex.quote(DRIVE_FOLDER)}", timeout=60)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("Drive list timed out (slow link) — refresh to retry")
+        lines = [l for l in out.strip().splitlines() if l.strip().startswith("{")]
+        if not lines:
+            raise RuntimeError((out.strip()[-300:] or "no output from Drive helper"))
+        data = json.loads(lines[-1])
+        state["drive_loras"] = data["loras"]
+        state["drive_err"] = None if data["loras"] else \
+            f"folder empty or not shared with {data.get('sa', 'the service account')}"
+    except Exception as e:
+        state["drive_loras"] = state["drive_loras"] or []
+        state["drive_err"] = str(e)
+
+_ID_OK = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_,")
+
+def start_download(ids):
+    """Detached instance-side pull of comma-joined Drive file ids (or 'all')."""
+    if ids != "all" and (not ids or set(ids) - _ID_OK):
+        return False
+    cmd = ("mkdir -p /workspace/ComfyUI/models/loras; "
+           f"setsid nohup python3 /root/vgo_drive.py get "
+           f"{shlex.quote(DRIVE_FOLDER)} {shlex.quote(ids)} "
+           ">>/tmp/lora_pull.log 2>&1 < /dev/null &")
+    try:
+        run_ssh(cmd, timeout=15)
+        return True
+    except Exception:
+        return False
+
+# Restart ComfyUI on the instance. Prefer relaunching with the EXACT cmdline of
+# the running process; if it's already dead, reconstruct start.sh's launch line
+# (COMFYUI_DIR + conditional extra_model_paths + sage if importable).
+RESTART_CMD = r'''
+PID=$(pgrep -f "[m]ain\.py" | head -1)
+CMD=""
+[ -n "$PID" ] && CMD=$(tr "\0" " " </proc/$PID/cmdline 2>/dev/null)
+if [ -z "$CMD" ]; then
+  MP="mai""n.py"
+  CDIR=$(grep -m1 "^COMFYUI_DIR=" /start.sh 2>/dev/null | cut -d= -f2- | tr -d '"')
+  if [ -z "$CDIR" ] || [ ! -f "$CDIR/$MP" ]; then
+    for d in /ComfyUI /workspace/ComfyUI /comfyui; do
+      [ -f "$d/$MP" ] && CDIR="$d" && break
+    done
+  fi
+  [ -f "$CDIR/$MP" ] || { echo "RESTART_NO_MAINPY"; exit 0; }
+  EP=""; [ -f "$CDIR/extra_model_paths.yaml" ] && EP="--extra-model-paths-config $CDIR/extra_model_paths.yaml"
+  SF=""; python3 -c "import sageattention" >/dev/null 2>&1 && SF="--use-sage-attention"
+  MG=""; python3 -c "import comfyui_manager" >/dev/null 2>&1 && MG="--enable-manager"
+  CMD="python3 $CDIR/$MP --listen --enable-cors-header * $SF $MG $EP"
+fi
+pkill -f "[m]ain\.py" 2>/dev/null; sleep 2
+set -f
+setsid nohup $CMD >> /workspace/comfyui_restart.log 2>&1 < /dev/null &
+echo RESTART_ISSUED
+'''
+
+def restart_comfy():
+    try:
+        out = run_ssh(RESTART_CMD, timeout=40)
+        return "RESTART_ISSUED" in out and "RESTART_NO_MAINPY" not in out
+    except Exception:
+        return False
+
+# Compare local ComfyUI output against the NAS session folder (name+size, so
+# partial/changed files count as pending). Uses the same key/proxy path the
+# mmx_extras nas_worker set up; prints SYNC_NA if that infra isn't present.
+SYNC_STATUS_CMD = r'''
+OUT=/workspace/ComfyUI/output
+NEB=$(cat /root/.neb_session 2>/dev/null)
+ND=$(tr "\0" "\n" </proc/1/environ | grep ^NAS_DEST= | cut -d= -f2-)
+if [ -z "$ND" ] || [ ! -f /root/.ssh/mmx_nas_key ]; then echo SYNC_NA; exit 0; fi
+if [ -z "$NEB" ]; then
+    # env present but no session: worker died (share locked at boot?) or still
+    # retrying. Restart it if dead, and say so instead of blaming the env.
+    if pgrep -f "[v]go_sync_worker\|[n]as_worker" >/dev/null 2>&1; then
+        echo SYNC_NO_SESSION
+    else
+        echo NEED_SAFE_WORKER
+    fi
+    exit 0
+fi
+UH=${ND%%:*}; BASE=${ND#*:}
+mkdir -p "$OUT"
+L=$(cd "$OUT" && find . -type f ! -name "*.part*" -printf "%P\t%s\n" | sort)
+R=$(ssh -i /root/.ssh/mmx_nas_key -o ProxyCommand="nc -X 5 -x 127.0.0.1:1055 %h %p" \
+    -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 \
+    "$UH" "cd $BASE/$NEB 2>/dev/null && find . -type f -printf '%P\t%s\n'" 2>/dev/null | sort)
+printf "%s\n" "$L" > /tmp/.vgo_sync_l
+printf "%s\n" "$R" > /tmp/.vgo_sync_r
+echo "===LOCALN==="
+grep -c . /tmp/.vgo_sync_l
+echo "===PENDING==="
+comm -23 /tmp/.vgo_sync_l /tmp/.vgo_sync_r | cut -f1 | grep -v "^$"
+echo "===NEB==="
+echo "$NEB"
+'''
+
+SYNC_NOW_CMD = r'''
+NEB=$(cat /root/.neb_session 2>/dev/null)
+ND=$(tr "\0" "\n" </proc/1/environ | grep ^NAS_DEST= | cut -d= -f2-)
+if [ -z "$NEB" ] || [ -z "$ND" ] || [ ! -f /root/.ssh/mmx_nas_key ]; then echo SYNC_NA; exit 0; fi
+UH=${ND%%:*}; BASE=${ND#*:}
+setsid nohup bash -c "rsync -a --partial -e 'ssh -i /root/.ssh/mmx_nas_key -o ProxyCommand=\"nc -X 5 -x 127.0.0.1:1055 %h %p\" -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15' /workspace/ComfyUI/output/ $UH:$BASE/$NEB/ && echo \"\$(date '+%F %T') manual pass ok -> $NEB\" >> /workspace/nas_sync.log || echo \"\$(date '+%F %T') manual pass FAILED\" >> /workspace/nas_sync.log" >/dev/null 2>&1 < /dev/null &
+echo SYNC_STARTED
+'''
+
+def sync_status():
+    try:
+        out = run_ssh(SYNC_STATUS_CMD, timeout=45)
+    except Exception as e:
+        return {"na": True, "err": str(e)}
+    if "NEED_SAFE_WORKER" in out:
+        try:
+            run_ssh(_SAFE_WORKER, timeout=25)
+            return {"na": True, "err": "sync worker was dead — started a fresh one, check again in ~1 min"}
+        except Exception as e:
+            return {"na": True, "err": "worker dead and restart failed: " + str(e)[:120]}
+    if "SYNC_NO_SESSION" in out:
+        return {"na": True, "err": "sync worker running but no session yet — check again shortly"}
+    if "SYNC_NA" in out:
+        return {"na": True, "err": "NAS sync infra not on this instance (mmx_extras env missing)"}
+    sec = parse_sections(out)
+    try:
+        local_n = int((sec.get("LOCALN") or ["0"])[0].strip() or 0)
+    except ValueError:
+        local_n = 0
+    pending = [l.strip() for l in sec.get("PENDING", []) if l.strip()]
+    neb = ((sec.get("NEB") or [""])[0]).strip()
+    return {"na": False, "local": local_n, "pending": pending, "neb": neb}
+
+def sync_now():
+    try:
+        return "SYNC_STARTED" in run_ssh(SYNC_NOW_CMD, timeout=20)
+    except Exception:
+        return False
+
+# ── encrypted NAS share lock controls (subgenula mechanism) ──────────────────
+# Same path as the subgenula viewer: ssh to pyramid as alchera (mmx_nas_key),
+# passphrase over stdin, sudo -n synoshare. Share name derives from NAS_DEST.
+_NAS_PRELUDE = r"""
+ND=$(tr "\0" "\n" </proc/1/environ | grep ^NAS_DEST= | cut -d= -f2-)
+if [ -z "$ND" ] || [ ! -f /root/.ssh/mmx_nas_key ]; then echo LOCK_NA; exit 0; fi
+UH=${ND%%:*}; BASE=${ND#*:}; SHARE=$(basename "$BASE")
+NSSH() { ssh -i /root/.ssh/mmx_nas_key -o ProxyCommand="nc -X 5 -x 127.0.0.1:1055 %h %p" \
+  -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 "$UH" "$@"; }
+"""
+
+# writes+starts a minimal sync worker: session-create (reuse existing, else
+# next nebN on the NAS) + rsync loop. Never re-runs mmx setup/tailscale —
+# the boot worker script is single-use (consumed auth key, 2026-08-30).
+_SAFE_WORKER = r"""
+cat > /root/vgo_sync_worker.sh <<'VWEOF'
+#!/usr/bin/env bash
+ND=$(tr "\0" "\n" </proc/1/environ | grep ^NAS_DEST= | cut -d= -f2-)
+[ -z "$ND" ] || [ ! -f /root/.ssh/mmx_nas_key ] && exit 1
+UH=${ND%%:*}; BASE=${ND#*:}
+E='ssh -i /root/.ssh/mmx_nas_key -o ProxyCommand="nc -X 5 -x 127.0.0.1:1055 %h %p" -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=15'
+NEB=$(cat /root/.neb_session 2>/dev/null)
+if [ -z "$NEB" ]; then
+    eval $E "$UH" "test -d \"$BASE\"" || { echo "$(date "+%F %T") base missing (locked?)" >> /workspace/nas_sync.log; exit 1; }
+    LAST=$(eval $E "$UH" "ls -1d \"$BASE\"/neb* 2>/dev/null" | sed "s/.*neb//" | sort -n | tail -1)
+    NEB="neb$(( ${LAST:-0} + 1 ))"
+    eval $E "$UH" "mkdir -p \"$BASE/$NEB\"" || exit 1
+    echo "$NEB" > /root/.neb_session
+    echo "$(date "+%F %T") session $NEB created" >> /workspace/nas_sync.log
+fi
+while :; do
+    rsync -a --partial -e "$E" /workspace/ComfyUI/output/ "$UH:$BASE/$NEB/" \
+        && echo "$(date "+%F %T") pass ok -> $NEB" >> /workspace/nas_sync.log \
+        || echo "$(date "+%F %T") pass FAILED" >> /workspace/nas_sync.log
+    sleep 60
+done
+VWEOF
+chmod +x /root/vgo_sync_worker.sh
+setsid nohup /root/vgo_sync_worker.sh >> /workspace/nas_sync.log 2>&1 < /dev/null &
+"""
+
+LOCK_STATUS_CMD = _NAS_PRELUDE + r"""
+NSSH "if mount | grep -q \" /volume1/$SHARE type ecryptfs\"; then echo UNLOCKED; elif [ -d \"$BASE\" ]; then echo PLAIN; else echo LOCKED; fi" 2>/dev/null || echo LOCK_ERR
+"""
+
+UNLOCK_CMD = _NAS_PRELUDE + r"""
+NSSH "IFS= read -r p; sudo -n /usr/syno/sbin/synoshare --enc_mount \"$SHARE\" \"\$p\" >/dev/null 2>&1; unset p; mount | grep -q \" /volume1/$SHARE type ecryptfs\" && echo UNLOCK_OK || echo UNLOCK_FAIL"
+pgrep -f "[v]go_sync_worker\|[n]as_worker" >/dev/null 2>&1 || echo NEED_SAFE_WORKER
+"""
+
+LOCK_CMD = _NAS_PRELUDE + r"""
+NSSH "sudo -n /usr/syno/sbin/synoshare --enc_unmount \"$SHARE\" >/dev/null 2>&1; mount | grep -q \" /volume1/$SHARE type ecryptfs\" && echo LOCK_FAIL || echo LOCK_OK"
+"""
+
+def lock_status():
+    try:
+        out = run_ssh(LOCK_STATUS_CMD, timeout=25)
+    except Exception as e:
+        return {"state": "unknown", "err": str(e)}
+    for tok, st in (("UNLOCKED", "unlocked"), ("PLAIN", "plain"),
+                    ("LOCKED", "locked"), ("LOCK_NA", "na")):
+        if tok in out:
+            return {"state": st}
+    return {"state": "unknown", "err": out.strip()[-120:]}
+
+def do_unlock(passphrase):
+    if not passphrase:
+        return {"ok": False, "err": "empty passphrase"}
+    try:
+        out = run_ssh(UNLOCK_CMD, timeout=60, stdin_data=passphrase + "\n")
+    except Exception as e:
+        return {"ok": False, "err": str(e)}
+    restarted = False
+    if "UNLOCK_OK" in out and "NEED_SAFE_WORKER" in out:
+        try:
+            run_ssh(_SAFE_WORKER, timeout=25); restarted = True
+        except Exception:
+            pass
+    return {"ok": "UNLOCK_OK" in out,
+            "worker_restarted": restarted,
+            "err": None if "UNLOCK_OK" in out else "wrong passphrase or sudo not permitted"}
+
+def do_lock():
+    try:
+        out = run_ssh(LOCK_CMD, timeout=60)
+    except Exception as e:
+        return {"ok": False, "err": str(e)}
+    return {"ok": "LOCK_OK" in out}
+
+
+# Vast balance + burn rate via the local vastai CLI, cached 2 min (billing
+# moves slowly; no reason to hammer their API).
+_billing = {"t": 0.0, "data": None}
+
+def billing():
+    now = time.time()
+    if _billing["data"] is not None and now - _billing["t"] < 120:
+        return _billing["data"]
+    try:
+        u = json.loads(subprocess.run(["vastai", "show", "user", "--raw"],
+                                      capture_output=True, text=True, timeout=15).stdout)
+        credit = float(u.get("credit") or 0)
+        inst = json.loads(subprocess.run(["vastai", "show", "instances", "--raw"],
+                                         capture_output=True, text=True, timeout=15).stdout)
+        run = [i for i in inst if i.get("actual_status") == "running"]
+        dph = sum(float(i.get("dph_total") or 0) for i in run)
+        # this instance's own rate — what a boot actually costs
+        mine = 0.0
+        for i in run:
+            if str(i.get("id")) == str(ID):
+                mine = float(i.get("dph_total") or 0); break
+        data = {"credit": credit, "dph": dph, "dph_self": mine or dph}
+    except Exception as e:
+        data = {"err": str(e)}
+    _billing["t"] = now
+    _billing["data"] = data
+    return data
+
+# ── built-in terminal: minimal RFC6455 websocket -> pty(ssh -tt) bridge ──────
+# Localhost-only, one session per socket. ssh reuses the ControlMaster socket,
+# so attach is instant and it works over direct/relay/tailscale identically.
+_WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+def _ws_frame(op, data):
+    ln = len(data)
+    if ln < 126:    return struct.pack("!BB", 0x80 | op, ln) + data
+    if ln < 65536:  return struct.pack("!BBH", 0x80 | op, 126, ln) + data
+    return struct.pack("!BBQ", 0x80 | op, 127, ln) + data
+
+def _ws_read(rf):
+    hd = rf.read(2)
+    if len(hd) < 2: return None, b""
+    b1, b2 = hd[0], hd[1]
+    op, ln = b1 & 0x0F, b2 & 0x7F
+    if ln == 126:   ln = struct.unpack("!H", rf.read(2))[0]
+    elif ln == 127: ln = struct.unpack("!Q", rf.read(8))[0]
+    mask = rf.read(4) if b2 & 0x80 else b""
+    data = bytearray(rf.read(ln))
+    if mask:
+        for i in range(len(data)):
+            data[i] ^= mask[i % 4]
+    return op, bytes(data)
+
+def term_session(h):
+    key = h.headers.get("Sec-WebSocket-Key")
+    if not key:
+        h.send_error(400); return
+    acc = base64.b64encode(hashlib.sha1((key + _WS_GUID).encode()).digest()).decode()
+    h.connection.sendall(("HTTP/1.1 101 Switching Protocols\r\n"
+                          "Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                          f"Sec-WebSocket-Accept: {acc}\r\n\r\n").encode())
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execvpe(SSH[0], [SSH[0], "-tt"] + SSH[1:],
+                   {**os.environ, "TERM": "xterm-256color"})
+    lock = threading.Lock()
+    alive = {"ok": True}
+    def send(op, data):
+        with lock:
+            try:
+                h.connection.sendall(_ws_frame(op, data))
+            except OSError:
+                alive["ok"] = False
+    def pump():
+        while alive["ok"]:
+            try:
+                r, _, _ = select.select([fd], [], [], 1.0)
+            except OSError:
+                break
+            if fd in r:
+                try:
+                    d = os.read(fd, 16384)
+                except OSError:
+                    break
+                if not d:
+                    break
+                send(2, d)          # binary frames: pty bytes may split UTF-8
+        alive["ok"] = False
+        send(8, b"")
+    threading.Thread(target=pump, daemon=True).start()
+    try:
+        while alive["ok"]:
+            op, data = _ws_read(h.rfile)
+            if op is None or op == 8:
+                break
+            if op == 9:
+                send(10, data); continue
+            if op in (1, 2):
+                if data[:2] == b"i:":
+                    os.write(fd, data[2:])
+                elif data[:2] == b"r:":
+                    try:
+                        c, r = data[2:].decode().split(",")
+                        fcntl.ioctl(fd, termios.TIOCSWINSZ,
+                                    struct.pack("HHHH", int(r), int(c), 0, 0))
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+    alive["ok"] = False
+    try: os.kill(pid, 9)
+    except OSError: pass
+    try: os.close(fd)
+    except OSError: pass
+
+class H(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def _json(self, obj, code=200):
+        body = json.dumps(obj).encode()
+        try:
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers(); self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # browser hung up mid-write (slow poll + reload) — harmless
+    def do_POST(self):
+        u = urllib.parse.urlparse(self.path)
+        if u.path == "/unlock":
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(n) or b"{}")
+                self._json(do_unlock(body.get("pass", "")))
+            except Exception as e:
+                self._json({"ok": False, "err": str(e)})
+            return
+        self._json({"err": "unknown endpoint"}, 404)
+
+    def do_GET(self):
+        u = urllib.parse.urlparse(self.path)
+        if u.path == "/term":
+            self.close_connection = True
+            term_session(self)
+            return
+        if u.path == "/data":
+            sec = poll()
+            up = "UP" in "".join(sec.get("COMFY", []))
+            if up and not state["opened_comfy"]:
+                state["opened_comfy"] = True
+                webbrowser.open(COMFY_URL)
+            if state["drive_loras"] is None:
+                threading.Thread(target=fetch_drive_loras, daemon=True).start()
+                state["drive_loras"] = []
+            self._json({"sec": sec, "up": up,
+                        "drive_loras": state["drive_loras"], "drive_err": state["drive_err"]})
+            return
+        if u.path == "/logs":
+            try:
+                sec = parse_sections(run_ssh(REMOTE_LOGS, timeout=12))
+            except Exception as e:
+                sec = {"LOG": [str(e)], "XLOG": [], "PULL": []}
+            self._json(sec); return
+        if u.path == "/loras_refresh":
+            fetch_drive_loras(); self._json({"ok": True}); return
+        if u.path == "/install":
+            ids = urllib.parse.parse_qs(u.query).get("ids", [""])[0]
+            self._json({"ok": start_download(ids)}); return
+        if u.path == "/restart":
+            self._json({"ok": restart_comfy()}); return
+        if u.path == "/sync_status":
+            self._json(sync_status()); return
+        if u.path == "/sync_now":
+            self._json({"ok": sync_now()}); return
+        if u.path == "/lock_status":
+            self._json(lock_status()); return
+        if u.path == "/lock":
+            self._json(do_lock()); return
+        if u.path == "/billing":
+            self._json(billing()); return
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers(); self.wfile.write(PAGE)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+PAGE = ("""<!doctype html><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>vgo — __ID__</title>
+<link rel=stylesheet href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+<style>
+ :root{--bg:#0d1117;--card:#161b22;--line:#30363d;--ink:#c9d1d9;--dim:#8b949e;
+       --accent:#1f6feb;--ok:#3fb950;--warn:#d29922;--bad:#f85149}
+ *{box-sizing:border-box}
+ html,body{height:100%}
+ body{margin:0;background:var(--bg);color:var(--ink);
+      font:12.5px/1.45 ui-monospace,Menlo,monospace;
+      display:flex;flex-direction:column;overflow:hidden}
+ a{color:#58a6ff;text-decoration:none} a:hover{text-decoration:underline}
+ button{background:var(--accent);color:#fff;border:none;border-radius:6px;
+        padding:2px 10px;cursor:pointer;font:inherit;font-size:12px}
+ button:disabled{background:var(--line);color:var(--dim);cursor:default}
+ .ghost{background:transparent;border:1px solid var(--line);color:var(--dim)}
+ .ghost:hover{color:var(--ink);border-color:var(--dim)}
+ header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+        padding:8px 14px;border-bottom:1px solid var(--line);background:var(--card)}
+ header .brand{font-weight:700;color:#e6edf3;font-size:14px}
+ header .dim{color:var(--dim)}
+ .pill{padding:1px 10px;border-radius:99px;font-weight:600;font-size:11px}
+ .up{background:#1a7f37;color:#fff} .down{background:#6e4b00;color:#fff}
+ #billline{margin-left:auto;color:var(--dim);font-size:11.5px}
+ main{flex:1;display:grid;gap:10px;padding:10px 14px;min-height:0;
+      grid-template-columns:1.05fr 0.95fr 1.25fr}
+ .col{display:flex;flex-direction:column;gap:10px;min-height:0}
+ .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+       display:flex;flex-direction:column;min-height:0;overflow:hidden}
+ .card>.hd{display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+       padding:7px 12px;border-bottom:1px solid var(--line);flex:none}
+ .card>.hd .t{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;
+       color:var(--dim);font-weight:700}
+ .card>.bd{flex:1;overflow:auto;padding:8px 12px;min-height:0}
+ .card pre{margin:0;background:none;border:none;padding:0;white-space:pre-wrap;
+       word-break:break-word;font-size:12px;color:var(--ink)}
+ table{width:100%;border-collapse:collapse}
+ td{padding:4px 6px;border-top:1px solid #21262d;font-size:12px}
+ tr:first-child td{border-top:none}
+ input[type=checkbox]{width:14px;height:14px;accent-color:var(--accent);cursor:pointer}
+ .dim{color:var(--dim)}
+ .grow{flex:1} .h32{flex:0 0 32%} .h26{flex:0 0 26%} .h22{flex:0 0 22%}
+ @media (max-width:1100px){body{overflow:auto}main{grid-template-columns:1fr}}
+</style>
+<header>
+  <span class=brand>vgo</span>
+  <span class=dim>__ID__ · __HOST__:__PORT__</span>
+  <span id=pill class="pill down">…</span>
+  <span id=mmxpill class="pill down" title="mmx runner on the instance (localhost:8190/health) — open the page with: vgo studio">runner …</span>
+  <a href="__COMFY__" target=_blank>ComfyUI</a>
+  <a href="http://localhost:7681" target=_blank>Terminal</a>
+  <button class=ghost id=rcbtn onclick="restartComfy()">restart ComfyUI</button>
+  <span id=billline>balance: loading…</span>
+</header>
+<main>
+  <div class=col>
+    <div class="card grow">
+      <div class=hd><span class=t>LoRAs · Google Drive</span>
+        <button id=dlsel onclick="dlSelected()" disabled>Download selected</button>
+        <button class=ghost onclick="dlAll()">all</button>
+        <button class=ghost onclick="refreshLoras()">refresh</button>
+        <span id=selcount class=dim></span></div>
+      <div class=bd><div id=loras><pre>loading…</pre></div></div>
+    </div>
+    <div class="card h26">
+      <div class=hd><span class=t>LoRA pulls</span><span class=dim>lora_pull.log</span></div>
+      <div class=bd><pre id=pull class=live>loading…</pre></div>
+    </div>
+  </div>
+  <div class=col>
+    <div class="card grow">
+      <div class=hd><span class=t>NAS output sync</span>
+        <span id=lockdot style="font-size:0.9em">●</span><span id=lockstate class=dim></span></div>
+      <div class=bd>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+          <button class=ghost id=unlockbtn onclick="unlockShare()" style="display:none">unlock…</button>
+          <button class=ghost id=lockbtn onclick="lockShare()" style="display:none">lock (unmount)</button>
+          <button class=ghost onclick="checkSync()">check transfers</button>
+          <button id=syncbtn onclick="syncNow()" style="display:none">sync pending now</button>
+        </div>
+        <div id=syncsum class=dim style="margin-bottom:6px"></div>
+        <pre id=syncinfo style="display:none;margin-bottom:8px"></pre>
+        <pre id=nas>loading…</pre>
+      </div>
+    </div>
+    <div class="card h32">
+      <div class=hd><span class=t>Models on disk</span></div>
+      <div class=bd><pre id=models>loading…</pre></div>
+    </div>
+    <div class="card h22">
+      <div class=hd><span class=t>GPU</span></div>
+      <div class=bd><pre id=gpu>loading…</pre></div>
+    </div>
+  </div>
+  <div class=col>
+    <div class="card" id=dlcard style="display:none;flex:none;max-height:46%">
+      <div class=hd><span class=t>Downloads</span><span id=dlsummary class=dim></span></div>
+      <div class=bd id=dlbars></div>
+    </div>
+    <div class="card h32">
+      <div class=hd><span class=t>Boot log</span><span class=dim>live</span></div>
+      <div class=bd><pre id=log class=live>loading…</pre></div>
+    </div>
+    <div class="card grow">
+      <div class=hd><span class=t>Terminal</span><span class=dim id=termstat>connecting…</span></div>
+      <div class=bd id=termbd style="padding:2px 4px;background:#0d1117"></div>
+    </div>
+  </div>
+</main>
+<script>
+let pending = {};
+let selected = new Set();
+async function refreshLoras(){ await fetch('/loras_refresh'); }
+function toggle(id){
+  if(selected.has(id)) selected.delete(id); else selected.add(id);
+  render(lastData);
+}
+async function dlSelected(){
+  const chosen = ((lastData && lastData.drive_loras) || []).filter(l => selected.has(l.id));
+  if(!chosen.length) return;
+  for(const l of chosen) pending[l.name] = Date.now();
+  const ids = chosen.map(l => l.id).join(',');
+  selected.clear();
+  render(lastData);
+  await fetch('/install?ids='+encodeURIComponent(ids));
+}
+async function dlAll(){
+  for(const l of ((lastData && lastData.drive_loras) || [])) pending[l.name] = Date.now();
+  selected.clear();
+  render(lastData);
+  await fetch('/install?ids=all');
+}
+async function restartComfy(){
+  const b = document.getElementById('rcbtn');
+  b.disabled = true; b.textContent = 'restarting…';
+  try{
+    const r = await fetch('/restart'); const j = await r.json();
+    if(!j.ok){ b.textContent = 'restart failed — see terminal'; }
+  }catch(e){ b.textContent = 'restart failed'; }
+  setTimeout(() => { b.disabled = false; b.textContent = 'restart ComfyUI'; }, 25000);
+}
+let lockState = 'unknown';
+function paintLock(st, extra){
+  lockState = st;
+  const dot = document.getElementById('lockdot');
+  const txt = document.getElementById('lockstate');
+  const ub = document.getElementById('unlockbtn');
+  const lb = document.getElementById('lockbtn');
+  const map = {unlocked:['#3fb950','unlocked'], plain:['#3fb950','mounted (unencrypted)'],
+               locked:['#f85149','LOCKED'], na:['#8b949e','no NAS on this instance'],
+               unknown:['#8b949e','state unknown']};
+  const m = map[st] || map.unknown;
+  dot.style.color = m[0];
+  txt.textContent = m[1] + (extra ? ' — ' + extra : '');
+  ub.style.display = (st === 'locked') ? 'inline-block' : 'none';
+  lb.style.display = (st === 'unlocked') ? 'inline-block' : 'none';
+}
+async function pollLock(){
+  try{
+    const r = await fetch('/lock_status'); const s = await r.json();
+    paintLock(s.state, s.err);
+  }catch(e){}
+  setTimeout(pollLock, 30000);
+}
+pollLock();
+async function unlockShare(){
+  const p = prompt('Passphrase for encrypted share:');
+  if(!p) return;
+  const ub = document.getElementById('unlockbtn');
+  ub.disabled = true; ub.textContent = 'unlocking…';
+  try{
+    const r = await fetch('/unlock', {method:'POST', headers:{'Content-Type':'application/json'},
+                                      body: JSON.stringify({pass: p})});
+    const s = await r.json();
+    if(s.ok){ paintLock('unlocked', s.worker_restarted ? 'sync worker restarted' : null); }
+    else { paintLock('locked', s.err || 'unlock failed'); }
+  }catch(e){ paintLock('unknown', String(e)); }
+  ub.disabled = false; ub.textContent = 'unlock…';
+}
+async function lockShare(){
+  if(!confirm('Unmount the encrypted share? Syncs will fail until unlocked again.')) return;
+  const lb = document.getElementById('lockbtn');
+  lb.disabled = true; lb.textContent = 'locking…';
+  try{
+    const r = await fetch('/lock'); const s = await r.json();
+    paintLock(s.ok ? 'locked' : 'unknown', s.ok ? null : (s.err || 'lock failed'));
+  }catch(e){ paintLock('unknown', String(e)); }
+  lb.disabled = false; lb.textContent = 'lock (unmount)';
+}
+async function checkSync(){
+  const sum = document.getElementById('syncsum');
+  const info = document.getElementById('syncinfo');
+  const btn = document.getElementById('syncbtn');
+  sum.textContent = 'checking…'; info.style.display = 'none'; btn.style.display = 'none';
+  try{
+    const r = await fetch('/sync_status'); const s = await r.json();
+    if(s.na){ sum.textContent = s.err || 'sync not available'; return; }
+    const done = s.local - s.pending.length;
+    if(!s.pending.length){
+      sum.textContent = `all ${s.local} file(s) on NAS (${s.neb}) ✓`;
+    } else {
+      sum.textContent = `${done}/${s.local} on NAS (${s.neb}) — ${s.pending.length} pending`;
+      info.textContent = s.pending.join('\\n');
+      info.style.display = 'block';
+      btn.style.display = 'inline-block';
+    }
+  }catch(e){ sum.textContent = 'check failed: '+e; }
+}
+async function syncNow(){
+  const btn = document.getElementById('syncbtn');
+  btn.disabled = true; btn.textContent = 'pass started…';
+  try{ await fetch('/sync_now'); }catch(e){}
+  setTimeout(() => {
+    btn.disabled = false; btn.textContent = 'sync pending now';
+    checkSync();
+  }, 15000);
+}
+let lastData = null;
+function render(d){
+  if(!d) return;
+  const s = d.sec||{};
+  const inst = new Set((s.INSTLORAS||[]).map(x=>x.trim()).filter(Boolean));
+  const parts = {};
+  for(const line of (s.XFER||[])){
+    const m = line.trim().match(/^(.*) (\\d+)$/);
+    if(!m) continue;
+    let base = m[1].split('/').pop();
+    base = base.replace(/^\\./,'').replace(/\\.part(\\.[A-Za-z0-9]+)?$/,'');
+    parts[base] = Math.max(parts[base]||0, parseInt(m[2]));
+  }
+  let rows = '';
+  for(const l of (d.drive_loras||[])){
+    let cell, box = '';
+    if(inst.has(l.name)) cell = '<span class=dim>installed ✓</span>';
+    else if(parts[l.name] !== undefined && l.bytes){
+      const pct = Math.min(100, Math.round(parts[l.name] / l.bytes * 100));
+      cell = `<div style="display:flex;align-items:center;gap:8px;justify-content:flex-end">
+        <div style="width:120px;height:8px;background:#21262d;border-radius:4px;overflow:hidden">
+          <div style="width:${pct}%;height:100%;background:#1f6feb"></div></div>
+        <span class=dim style="min-width:3.5em;text-align:right">${pct}%</span></div>`;
+    }
+    else if(pending[l.name]) cell = '<span class=dim>starting…</span>';
+    else {
+      cell = '';
+      box = `<input type=checkbox data-id="${l.id}"${selected.has(l.id)?' checked':''}>`;
+    }
+    rows += `<tr><td style="width:1.5em">${box}</td><td>${l.name}</td><td class=dim>${l.size}</td><td style="text-align:right">${cell}</td></tr>`;
+  }
+  document.getElementById('loras').innerHTML =
+    rows ? `<table>${rows}</table>`
+         : `<pre>${d.drive_err ? 'Drive list error: '+d.drive_err : '(no loras found — or instance still booting)'}</pre>`;
+  const nsel = selected.size;
+  document.getElementById('selcount').textContent = nsel ? nsel+' selected' : '';
+  document.getElementById('dlsel').disabled = !nsel;
+  document.getElementById('models').textContent=(s.MODELS||[]).join('\\n')||'(none yet)';
+  document.getElementById('gpu').textContent=(s.GPU||[]).join('\\n')||'(n/a)';
+  document.getElementById('nas').textContent=(s.NAS||[]).join('\\n')||'(n/a)';
+  const p=document.getElementById('pill');
+  p.textContent=d.up?'UP':'booting'; p.className='pill '+(d.up?'up':'down');
+  const mp=document.getElementById('mmxpill'); const mraw=(s.MMX||[]).join('').trim();
+  let mh=null; try{ mh = mraw && mraw!=='DOWN' ? JSON.parse(mraw) : null; }catch(e){ mh=null; }
+  if(mh){ mp.textContent='runner v'+(mh.version||'?')+(mh.comfy?'':' · comfy?')+(mh.openrouter_key?' · key':' · NO KEY'); mp.className='pill '+(mh.openrouter_key?'up':'down'); }
+  else { mp.textContent='runner down'; mp.className='pill down'; }
+  const upsec = parseInt(((s.UPTIME||[])[0]||'').trim(), 10);
+  if(!isNaN(upsec)) bootInfo.upSec = upsec;
+  if(d.up && !document.getElementById('dlcard').style.display.includes('flex')){
+    bootInfo.ready = true; bootInfo.etaMin = 0; bootInfo.stalled = false;
+  }
+  paintBill();
+  for(const k of Object.keys(pending)) if(inst.has(k)) delete pending[k];
+}
+function setLive(id, lines){
+  const el = document.getElementById(id);
+  const txt = (lines||[]).join('\\n');
+  if(!txt.trim()){
+    if(el.textContent.trim() === 'loading…') el.textContent = '(no output yet)';
+    else if(el.textContent.trim()) el.style.opacity = 0.55;
+    return;
+  }
+  el.style.opacity = 1;
+  const stick = el.scrollHeight - el.scrollTop - el.clientHeight < 30;
+  if(el.textContent !== txt){ el.textContent = txt; if(stick) el.scrollTop = el.scrollHeight; }
+}
+document.getElementById('loras').addEventListener('change', e => {
+  const id = e.target && e.target.getAttribute && e.target.getAttribute('data-id');
+  if(id) toggle(id);
+});
+let bootInfo = {upSec:0, etaMin:0, stalled:false, ready:false};
+let lastBill = null;
+function renderDownloads(lines, xlines){
+  const card = document.getElementById('dlcard');
+  const bars = document.getElementById('dlbars');
+  const sum  = document.getElementById('dlsummary');
+  const files = new Map();   // name -> last-seen row (later lines win)
+  let queued = null, summary = null;
+  const rowRe = /^(\S+\.(?:safetensors|pt|ckpt|gguf))\s+(\d+(?:\.\d+)?)%\s+(\S+)\/(\S+)\s+(\S+\/s)\s+ETA\s+(\S+)/;
+  // hf/tqdm progress from extra_models.log: "name:  45%|███| 9.5G/21.0G [01:12<01:29, 129MB/s]"
+  const tqdmRe = /^(.+?):?\s+(\d+)%\|[^|]*\|\s*([\d.]+[kKMGT]?i?B?)\/([\d.]+[kKMGT]?i?B?)\s*\[[^\]<]*<([^,\]]+),\s*([^\]\s]+)/;
+  for(const raw of (xlines||[])){
+    const m = raw.trim().match(tqdmRe);
+    if(m){
+      let name = m[1].trim();
+      if(name.length > 44) name = name.slice(0, 41) + '…';
+      files.set(name, {pct: parseFloat(m[2]), cur: m[3], tot: m[4],
+                       spd: m[6].endsWith('/s') ? m[6] : m[6] + '/s', eta: m[5].trim()});
+    }
+  }
+  for(const raw of (lines||[])){
+    const line = raw.trim();
+    const m = line.match(rowRe);
+    if(m){ files.set(m[1], {pct:parseFloat(m[2]), cur:m[3], tot:m[4], spd:m[5], eta:m[6]}); continue; }
+    const q = line.match(/^QUEUED \((\d+)\): (.*)$/);
+    if(q){ queued = q[2]; continue; }
+    const s = line.match(/=== Downloads @ .* - (.*) ===/);
+    if(s){ summary = s[1]; }
+  }
+  const active = [...files.entries()].filter(([,f]) => f.pct < 100);
+  if(!active.length && !queued){ card.style.display = 'none'; return; }
+  card.style.display = 'flex';
+  const etaMin = e => { const p = e.split(':').map(Number);
+    return p.length === 3 ? p[0]*60 + p[1] + p[2]/60 : p[0] + (p[1]||0)/60; };
+  const fmtEta = e => { const m = etaMin(e);
+    if(!isFinite(m) || m <= 0) return '…';
+    if(m < 1) return '<1m';
+    if(m < 60) return Math.round(m) + 'm';
+    return Math.floor(m/60) + 'h ' + Math.round(m%60) + 'm'; };
+  const live = active.filter(([,f]) => !(f.spd.startsWith('0.0') || f.spd.startsWith('0B')));
+  const longest = live.length ? Math.max(...live.map(([,f]) => etaMin(f.eta))) : 0;
+  const bits = [];
+  bits.push(active.length + ' downloading');
+  if(longest > 0) bits.push('longest ~' + fmtEta(String(Math.floor(longest)) + ':' + String(Math.round((longest%1)*60)).padStart(2,'0')));
+  if(summary) bits.push(summary);
+  sum.textContent = bits.join(' · ');
+  let html = '';
+  for(const [name, f] of active){
+    const stalled = f.spd.startsWith('0.0') || f.spd.startsWith('0B');
+    const meta = stalled
+      ? `${f.cur}/${f.tot} · <span style="color:#d29922">stalled</span>`
+      : `${f.cur}/${f.tot} · ${f.spd} · about ${fmtEta(f.eta)} left`;
+    html += `<div style="margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:3px">
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</span>
+        <span class=dim style="flex:none">${f.pct.toFixed(1)}%</span></div>
+      <div style="height:9px;background:#21262d;border-radius:5px;overflow:hidden">
+        <div style="width:${Math.min(100,f.pct)}%;height:100%;border-radius:5px;
+             background:${stalled ? '#6e4b00' : '#1f6feb'}"></div></div>
+      <div class=dim style="font-size:11px;margin-top:2px">${meta}</div>
+    </div>`;
+  }
+  if(queued) html += `<div class=dim style="font-size:11px">queued: ${queued}</div>`;
+  if(bars.innerHTML !== html) bars.innerHTML = html;
+  // feed the header's boot-cost estimate
+  bootInfo.etaMin = longest;
+  bootInfo.stalled = active.length > 0 && live.length === 0;
+  bootInfo.ready = false;
+  paintBill();
+}
+let logBusy = false;
+async function logTick(){
+  if(!logBusy){
+    logBusy = true;
+    try{
+      const r = await fetch('/logs'); const s = await r.json();
+      const dlRe = /(\.(?:safetensors|pt|ckpt|gguf)\s+\d+(?:\.\d+)?%\s)|(^\s*QUEUED \()|(^=== Downloads @)/;
+      setLive('log', (s.LOG||[]).filter(l => !dlRe.test(l)));
+      setLive('pull', s.PULL);
+      renderDownloads(s.LOG, s.XLOG);
+    }catch(e){}
+    logBusy = false;
+  }
+  setTimeout(logTick, 4000);
+}
+logTick();
+function fmtLeft(hours){
+  if(!isFinite(hours)) return '';
+  const m = Math.floor(hours * 60);
+  const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60;
+  return d > 0 ? `${d}d ${h}h` : (h > 0 ? `${h}h ${mm}m` : `${mm}m`);
+}
+function paintBill(){
+  const el = document.getElementById('billline');
+  const b = lastBill;
+  if(!b) return;
+  if(b.err){ el.textContent = 'balance: unavailable ('+b.err+')'; return; }
+  const rate = b.dph_self || b.dph || 0;
+  let s = `balance: $${b.credit.toFixed(2)}`;
+  if(rate > 0){
+    s += ` · $${rate.toFixed(3)}/hr · ~${fmtLeft(b.credit / rate)} left`;
+    // boot cost: spent so far (container uptime) + projected to ready
+    if(bootInfo.upSec > 0 && !bootInfo.ready){
+      const spent = (bootInfo.upSec / 3600) * rate;
+      const togo  = (bootInfo.etaMin / 60) * rate;
+      s += ` ┃ boot: spent $${spent.toFixed(2)}`;
+      s += bootInfo.stalled ? ' · <span style="color:#d29922">rate collapsed — host may be a dud</span>'
+                            : ` · $${togo.toFixed(2)} to go`;
+    } else if(bootInfo.upSec > 0 && bootInfo.ready){
+      const spent = (bootInfo.upSec / 3600) * rate;
+      s += ` ┃ boot cost $${spent.toFixed(2)}`;
+    }
+  } else {
+    s += ' · no running instances billing';
+  }
+  el.innerHTML = s;
+}
+async function billTick(){
+  try{
+    const r = await fetch('/billing'); lastBill = await r.json(); paintBill();
+  }catch(e){}
+  setTimeout(billTick, 60000);
+}
+billTick();
+// ── built-in terminal (xterm.js over ws -> pty ssh on the dash server) ───────
+let term = null, fitAddon = null, termWs = null;
+function termStatus(s){ document.getElementById('termstat').textContent = s; }
+function connectTerm(){
+  if(!window.Terminal || !window.FitAddon){ termStatus('xterm.js failed to load (offline?)'); return; }
+  if(!term){
+    term = new Terminal({fontSize:12, fontFamily:'ui-monospace,Menlo,monospace',
+      cursorBlink:true, scrollback:4000,
+      theme:{background:'#0d1117', foreground:'#c9d1d9', cursor:'#58a6ff'}});
+    fitAddon = new FitAddon.FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(document.getElementById('termbd'));
+    term.onData(d => { if(termWs && termWs.readyState === 1) termWs.send('i:'+d); });
+    new ResizeObserver(() => {
+      if(!fitAddon) return;
+      try{ fitAddon.fit(); }catch(e){}
+      if(termWs && termWs.readyState === 1) termWs.send('r:'+term.cols+','+term.rows);
+    }).observe(document.getElementById('termbd'));
+    document.getElementById('termbd').addEventListener('click', () => {
+      if(!termWs || termWs.readyState > 1) connectTerm(); });
+  }
+  termStatus('connecting…');
+  termWs = new WebSocket('ws://localhost:'+location.port+'/term');
+  termWs.binaryType = 'arraybuffer';
+  termWs.onopen = () => {
+    termStatus('connected');
+    try{ fitAddon.fit(); }catch(e){}
+    termWs.send('r:'+term.cols+','+term.rows);
+    term.focus();
+  };
+  termWs.onmessage = ev => term.write(new Uint8Array(ev.data));
+  termWs.onclose = () => termStatus('disconnected — click to reconnect');
+  termWs.onerror = () => termStatus('connection error — click to retry');
+}
+connectTerm();
+let tickBusy = false;
+async function tick(){
+  if(!tickBusy){
+    tickBusy = true;
+    try{ const r = await fetch('/data'); lastData = await r.json(); render(lastData); }catch(e){}
+    tickBusy = false;
+  }
+  setTimeout(tick, 5000);
+}
+tick();
+</script>"""
+  .replace("__ID__", ID).replace("__HOST__", HOST).replace("__PORT__", PORT).replace("__COMFY__", COMFY_URL)).encode()
+
+threading.Timer(0.8, lambda: webbrowser.open(f"http://localhost:{DASH_PORT}")).start()
+print(f"[vgo] dashboard: http://localhost:{DASH_PORT}  (Ctrl-C to stop)")
+http.server.ThreadingHTTPServer(("127.0.0.1", DASH_PORT), H).serve_forever()
+PYEOF
