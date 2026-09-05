@@ -901,8 +901,11 @@ def psnr(ref_png, video_path):
         r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", video_path, "-frames:v", "1", first],
                            capture_output=True, text=True, timeout=120)
         if r.returncode != 0: return None
-        r = subprocess.run(["ffmpeg", "-loglevel", "info", "-i", first, "-i", ref_png,
-                            "-lavfi", "[0:v][1:v]scale2ref[a][b];[a][b]psnr", "-f", "null", "-"],
+        # compare in the guide's own geometry: the reference is scaled to cover the video frame and
+        # centre-cropped (what MiniMaxH3AddGuide does), so a portrait slot-9 image is not squashed
+        w, h = probe_size(video_path)
+        geo = f"[1:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}[b];[0:v][b]psnr" if w and h else "[0:v][1:v]scale2ref[a][b];[a][b]psnr"
+        r = subprocess.run(["ffmpeg", "-loglevel", "info", "-i", first, "-i", ref_png, "-lavfi", geo, "-f", "null", "-"],
                            capture_output=True, text=True, timeout=120)
         m = re.search(r"average:(inf|[\d.]+)", r.stderr)
         if not m: return None

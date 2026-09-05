@@ -147,6 +147,31 @@ the soft path. It is not pixel-identical: the model regenerates frame 0 from the
 is unreachable through the h264 path anyway (floor 37.5). Things not yet tried that could raise it:
 `options.continuation_unet`, more sampler steps for segments 2+, the acc LoRA (was absent).
 
+## Segment-1 first-frame A/B, 2026-09-05 (live, RTX PRO 6000, acc + turbo LoRAs on, auto-prompt gemini-3-flash-preview)
+
+`live_ab_first_frame.py`, slot 1 = `Subjects/jj/j1.jpg` (identity), slot 9 = `Subjects/jj/j2.jpg`
+(480×416, first frame), one 2 s segment at 608×320, same seed and direction. PSNR in the guide's
+geometry (slot-9 image scaled to cover the frame and centre-cropped, as `MiniMaxH3AddGuide` does):
+
+| | guide+ref (slot 9 also a reference) | guide only |
+|---|---|---|
+| frame 0 vs slot 9 | 28.8 dB | 29.1 dB |
+| frame at 1 s vs slot 9 | **18.1 dB** | 16.2 dB |
+| frame 0, one mode vs the other | 31.8 dB (near-identical) | |
+| render time | 39 s | 24 s |
+
+Frame 0 is the slot-9 shot in both modes (same subject, framing, train window; identity kept
+from slot 1 in both). The difference is what happens after frame 0: with slot 9 also in the
+references the clip holds its framing and background (18.1 dB at 1 s), while guide-only drifts
+more (16.2 dB, the window scenery changes) — and its LLM prompt, which never sees picture 9,
+invents motion ("turning his head from the window") and describes the background from picture 1.
+With slot 9 in the references the LLM writes "the shot begins precisely on <Picture 2>".
+**Winner: `guide+ref`, kept as the default.** `guide` only saves render time.
+
+Note on framing: the guide cover-crops the slot-9 image to the output aspect, so a 480×416 first
+frame becomes a tighter 16:9 crop of itself. Give slot 9 an image at the output aspect when the
+exact framing matters. The runner's `continuity_psnr` for segment 1 uses this same geometry.
+
 ## Not verified
 
 - A fresh Vast rent end to end (needs the Vast CLI on the Mac). The deploy path was exercised by
@@ -154,4 +179,4 @@ is unreachable through the h264 path anyway (floor 37.5). Things not yet tried t
   environment, which is what a boot does; `/health` then reported `comfy: true, openrouter_key: true`.
 - `vgo studio` on the Mac itself (syntax-checked here: `bash -n`, embedded Python compiled, page JS
   `node --check`).
-- The runner with the acc LoRA on, and reference videos/audio on real hardware (mock only).
+- Reference videos/audio on real hardware (mock only). The acc LoRA has since run live (A/B above).
