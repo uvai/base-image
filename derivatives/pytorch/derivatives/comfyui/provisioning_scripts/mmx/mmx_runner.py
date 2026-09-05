@@ -51,7 +51,7 @@ Spec v2 (v1 specs with refs/first_frame are upgraded on arrival):
 import argparse, base64, copy, hashlib, http.server, json, mimetypes, os, random, re, shutil
 import subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request, urllib.error, uuid
 
-VERSION = "2.0"
+VERSION = "2.1"
 COMFY = "http://127.0.0.1:8188"
 OUTPUT_CANDIDATES = ["/workspace/ComfyUI/output", "/ComfyUI/output", "/root/ComfyUI/output"]
 JOBS = {}
@@ -254,24 +254,49 @@ _lib_cache = {}
 _lib_lock = threading.Lock()
 
 def library_state():
+    """Mount state of the share, judged on the NAS itself with the same signal the vgo
+    dashboard and the subgenula viewer use: an ecryptfs entry for the share in the mount
+    table (`synoshare --enc_mount` produces it, `--enc_unmount` removes it). Distinct tokens
+    per outcome, so a locked share is never confused with an ssh, permission or path error.
+    The raw command output lands in the runner log."""
     cfg = _nas_config()
     kinds = library_kinds()
     if cfg["local_root"]:
         return {"configured": True, "mode": "local", "reachable": os.path.isdir(cfg["local_root"]), "locked": False,
-                "kinds": kinds, "root": cfg["local_root"]}
-    st = {"configured": os.path.exists(cfg["key"]), "mode": "nas", "userhost": cfg["userhost"], "kinds": kinds,
-          "reachable": False, "locked": None, "error": None}
+                "state": "local", "kinds": kinds, "dirs": {k: ("ok" if os.path.isdir(os.path.join(cfg["local_root"], v)) else "missing")
+                                                          for k, v in kinds.items()}, "root": cfg["local_root"]}
+    st = {"configured": os.path.exists(cfg["key"]), "mode": "nas", "userhost": cfg["userhost"], "share": cfg["share"],
+          "kinds": kinds, "reachable": False, "locked": None, "state": None, "dirs": {}, "error": None}
     if not st["configured"]:
         st["error"] = f"NAS key {cfg['key']} not present on this host"
         return st
+    share = cfg["share"]
+    cmd = (f"if mount | grep -q {shell_quote(' ' + share + ' type ecryptfs')}; then echo MMX_STATE=mounted; "
+           f"elif [ -d {shell_quote(share)} ]; then echo MMX_STATE=plain; else echo MMX_STATE=locked; fi; "
+           f"echo MMX_WHO=$(id -un); ")
+    for k, v in kinds.items():
+        d = shell_quote(os.path.join(share, v))
+        cmd += (f"if [ -d {d} ]; then if [ -r {d} ] && [ -x {d} ]; then echo MMX_DIR={k}=ok; else echo MMX_DIR={k}=noperm; fi; "
+                f"else echo MMX_DIR={k}=missing; fi; ")
     try:
-        rc, out, err = nas_run(f"mount | grep -q {shell_quote(cfg['share'] + ' type ecryptfs')} && echo UNLOCKED || echo LOCKED", timeout=25)
+        rc, out, err = nas_run(cmd, timeout=25)
     except subprocess.TimeoutExpired:
-        st["error"] = "NAS unreachable (ssh timeout)"; return st
-    if rc != 0:
-        st["error"] = "NAS ssh failed: " + (err.strip()[-200:] or f"rc={rc}"); return st
+        st["error"] = "NAS unreachable (ssh timeout after 25s)"
+        print(f"[nas] state check timed out ({cfg['userhost']})", flush=True)
+        return st
+    print(f"[nas] state check rc={rc} out={out.strip()!r} err={err.strip()[-300:]!r}", flush=True)
+    m = re.search(r"MMX_STATE=(\w+)", out)
+    if rc == 255 or not m:
+        e = err.strip().splitlines()[-1] if err.strip() else (out.strip()[-200:] or f"rc={rc}, no state token")
+        st["error"] = ("NAS ssh failed: " if rc == 255 else "NAS check gave no verdict: ") + e[-200:]
+        return st
     st["reachable"] = True
-    st["locked"] = "LOCKED" in out
+    st["state"] = m.group(1)
+    st["locked"] = st["state"] == "locked"
+    who = re.search(r"MMX_WHO=(\S+)", out)
+    if who: st["user"] = who.group(1)
+    for k, v in re.findall(r"MMX_DIR=(\w+)=(\w+)", out):
+        st["dirs"][k] = v
     return st
 
 def library_list(kind, fresh=False, ttl=120):
@@ -300,19 +325,34 @@ def library_list(kind, fresh=False, ttl=120):
             data = {"kind": kind, "folder": sub, "locked": False, "error": None}
     else:
         st = library_state()
+        dstate = (st.get("dirs") or {}).get(kind)
         if not st["reachable"]:
-            data = {"kind": kind, "folder": sub, "items": [], "locked": None, "error": st.get("error") or "NAS unreachable"}
+            data = {"kind": kind, "folder": sub, "items": [], "locked": None, "state": st.get("state"),
+                    "error": st.get("error") or "NAS unreachable"}
         elif st["locked"]:
-            data = {"kind": kind, "folder": sub, "items": [], "locked": True, "error": None}
+            data = {"kind": kind, "folder": sub, "items": [], "locked": True, "state": "locked", "error": None}
+        elif dstate == "missing":
+            data = {"kind": kind, "folder": sub, "items": [], "locked": False, "state": st["state"],
+                    "error": f"{sub} folder does not exist on the share (share is {st['state']})"}
+        elif dstate == "noperm":
+            data = {"kind": kind, "folder": sub, "items": [], "locked": False, "state": st["state"],
+                    "error": f"{sub} is not readable by {st.get('user', 'the NAS user')} (permissions)"}
         else:
             base = os.path.join(cfg["share"], sub)
-            cmd = (f"cd {shell_quote(base)} 2>/dev/null || {{ echo MMX_NOFOLDER; exit 0; }}; "
+            cmd = (f"cd {shell_quote(base)} || {{ echo MMX_NOFOLDER; exit 0; }}; "
                    f"find . -path '*/@eaDir' -prune -o -type f -printf '%P\\t%s\\t%T@\\n'")
-            rc, out, err = nas_run(cmd, timeout=90)
+            try:
+                rc, out, err = nas_run(cmd, timeout=90)
+            except subprocess.TimeoutExpired:
+                rc, out, err = 124, "", "listing timed out after 90s"
+            print(f"[nas] list {kind} rc={rc} lines={len(out.splitlines())} err={err.strip()[-200:]!r}", flush=True)
             if "MMX_NOFOLDER" in out:
-                data = {"kind": kind, "folder": sub, "items": [], "locked": False, "error": f"{sub} folder does not exist on the share"}
+                data = {"kind": kind, "folder": sub, "items": [], "locked": False, "state": st["state"],
+                        "error": f"{sub} folder does not exist on the share"}
             elif rc != 0:
-                data = {"kind": kind, "folder": sub, "items": [], "locked": False, "error": err.strip()[-200:] or f"find rc={rc}"}
+                e = err.strip().splitlines()[-1] if err.strip() else f"find rc={rc}"
+                data = {"kind": kind, "folder": sub, "items": [], "locked": False, "state": st["state"],
+                        "error": ("NAS ssh failed: " if rc == 255 else "listing failed: ") + e[-200:]}
             else:
                 for line in out.splitlines():
                     parts = line.split("\t")
@@ -321,7 +361,7 @@ def library_list(kind, fresh=False, ttl=120):
                     if os.path.basename(rel).startswith("."): continue
                     try: items.append((rel, int(parts[1]), float(parts[2])))
                     except ValueError: continue
-                data = {"kind": kind, "folder": sub, "locked": False, "error": None}
+                data = {"kind": kind, "folder": sub, "locked": False, "state": st["state"], "error": None}
     out_items = []
     for rel, size, mtime in items:
         k = classify(rel)
@@ -332,8 +372,14 @@ def library_list(kind, fresh=False, ttl=120):
     out_items.sort(key=lambda x: (x["folder"].lower(), x["name"].lower()))
     data["items"] = out_items
     data["count"] = len(out_items)
+    data["listed_at"] = time.time()
+    # only successful listings are cached: a locked/unreachable verdict is re-checked on every
+    # request, so a Refresh right after unlocking sees the files
     with _lib_lock:
-        _lib_cache[kind] = {"t": time.time(), "data": data}
+        if not data.get("error") and not data.get("locked"):
+            _lib_cache[kind] = {"t": time.time(), "data": data}
+        else:
+            _lib_cache.pop(kind, None)   # a stale success must not outlive a locked/error verdict
     return data
 
 def library_local_file(path):
@@ -355,7 +401,7 @@ def library_local_file(path):
                 raise RuntimeError(f"NAS share is locked — unlock it in the vgo dashboard, then retry ({path})")
             if not st.get("reachable"):
                 raise RuntimeError(f"NAS unreachable from the instance: {st.get('error')} ({path})")
-            raise
+            raise RuntimeError(f"{e} (share is {st.get('state')})")
     return dest
 
 def library_thumb(path):

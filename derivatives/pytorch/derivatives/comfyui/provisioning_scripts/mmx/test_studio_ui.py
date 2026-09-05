@@ -111,6 +111,42 @@ def main():
             page.wait_for_function("document.querySelectorAll('#libSubjects .thumb').length === 2", timeout=15000)
             page.wait_for_function("document.querySelectorAll('#libVideoref .thumb').length === 1", timeout=15000)
             check("Subjects and VideoRef panes list the library", True)
+
+            # sticky slots: on a short viewport the VideoRef pane sits below the fold; scrolling the column
+            # to it must keep slot 1 on screen, and a real drag from there into slot 1 must land
+            page.set_viewport_size({"width": 1400, "height": 640})
+            page.wait_for_function("document.body.classList.contains('short')")
+            check("compact slots mode on a short viewport", page.evaluate("document.body.classList.contains('short') && document.querySelector('.libs').scrollHeight > document.querySelector('.libs').clientHeight"))
+            page.evaluate("document.querySelector('#libs').scrollTop = 0")
+            page.wait_for_timeout(150)
+            slot_before = page.evaluate("(()=>{ const s=document.querySelector(\".slot[data-kind=images][data-slot='1']\").getBoundingClientRect(); const c=document.querySelector('.card.slots').getBoundingClientRect(); return {top:s.top, cardTop:c.top, cardBottom:c.bottom, hd: document.querySelector('.card.slots .hd').getBoundingClientRect().height}; })()")
+            below = page.evaluate("document.querySelector('#libVideoref .thumb').getBoundingClientRect().top > window.innerHeight")
+            check("VideoRef item is below the fold before scrolling", below)
+            page.evaluate("document.querySelector('#libVideoref .thumb').scrollIntoView()")
+            page.wait_for_timeout(200)
+            r = page.evaluate("(()=>{ const s=document.querySelector(\".slot[data-kind=images][data-slot='1']\").getBoundingClientRect(); const v=document.querySelector('#libVideoref .thumb').getBoundingClientRect(); const card=document.querySelector('.card.slots').getBoundingClientRect(); return {slotTop:s.top, slotBottom:s.bottom, itemTop:v.top, cardTop:card.top, cardBottom:card.bottom, hd: document.querySelector('.card.slots .hd').getBoundingClientRect().height, h:window.innerHeight, scrolled: document.querySelector('#libs').scrollTop}; })()")
+            # the page header re-wraps when the health text changes length at this width, which shifts the whole
+            # column; judge the card by its position inside the column (it must stay the column's top card)
+            col_top = page.evaluate("document.querySelector('.col.left').getBoundingClientRect().top")
+            check("after scrolling the libraries, the slots card is still pinned at the column top and the item sits below it",
+                  r["scrolled"] > 0 and abs(r["cardTop"] - col_top) < 1 and abs((r["slotTop"] - r["cardTop"]) - (slot_before["top"] - slot_before["cardTop"])) < 1
+                  and r["slotBottom"] <= r["h"] and r["cardBottom"] <= r["itemTop"] < r["h"], f"before={slot_before} after={r} col_top={col_top}")
+            page.drag_and_drop("#libVideoref .thumb:nth-child(1)", ".slot[data-kind=videos][data-slot='1']")
+            d = page.evaluate("window.mmx.slots.videos[0]")
+            check("real drag from the below-the-fold VideoRef item into video slot 1 succeeds", d and d["kind"] == "library" and d["path"].startswith("VideoRef/"), str(d))
+            page.drag_and_drop("#libSubjects .thumb:nth-child(1)", ".slot[data-kind=images][data-slot='1']")
+            d = page.evaluate("window.mmx.slots.images[0]")
+            check("real drag from a scrolled Subjects item into image slot 1 succeeds", d and d["kind"] == "library" and d["path"].startswith("Subjects/"), str(d))
+            # auto-scroll: a drag hovering near the column's top edge scrolls it up
+            page.evaluate("document.querySelector('#libs').scrollTop = 150")
+            before = page.evaluate("document.querySelector('#libs').scrollTop")
+            page.evaluate("(()=>{ const c=document.querySelector('#libs').getBoundingClientRect(); window.mmx.dragScroll.active=true; window.mmx.dragScroll.x=c.left+40; window.mmx.dragScroll.y=c.top+8; for(let i=0;i<12;i++) window.mmx.dragScrollStep(); window.mmx.dragScroll.active=false; })()")
+            after = page.evaluate("document.querySelector('#libs').scrollTop")
+            check("drag near the top edge auto-scrolls the libraries up", after < before, f"{before} -> {after}")
+            page.evaluate("window.mmx.setSlot('images', 0, {kind:'local', id: window.mmx.refs()[0].id}); window.mmx.setSlot('videos', 0, null)")   # red back in slot 1
+            page.set_viewport_size({"width": 1500, "height": 1000})
+            page.wait_for_function("!document.body.classList.contains('short')")
+            page.evaluate("document.querySelector('#libs').scrollTop = 0")
             page.fill("#qSubjects", "js."); page.wait_for_function("document.querySelectorAll('#libSubjects .thumb').length === 1")
             check("library search filters", True); page.fill("#qSubjects", "")
             page.evaluate("window.mmx.simulateDrag({type:'lib', item: window.mmx.library.subjects.items[0]}, document.querySelector(\".slot[data-kind=images][data-slot='2']\"))")

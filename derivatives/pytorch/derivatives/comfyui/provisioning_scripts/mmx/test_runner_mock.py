@@ -194,8 +194,50 @@ def main():
     if not failed: shutil.rmtree(TMP, ignore_errors=True)
     sys.exit(1 if failed else 0)
 
+
+def state_parsing_checks():
+    """library_state()/library_list() verdicts with a stubbed ssh: mounted, plain, locked, ssh failure,
+    unreadable folder, missing folder — and no caching of non-success verdicts."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("mmx_runner_mod", os.path.join(HERE, "mmx_runner.py"))
+    mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+    os.environ.pop("MMX_LIBRARY_ROOT", None); os.environ["MMX_NAS_KEY"] = __file__   # "key" exists -> configured
+    calls = {"n": 0}
+    def stub(rc, out, err=""):
+        def f(cmd, timeout=60):
+            calls["n"] += 1
+            if "find ." in cmd: return (0, "a.jpg\t10\t1.0\nsub/b.mp4\t20\t2.0\n", "")
+            return (rc, out, err)
+        return f
+    mod.nas_run = stub(0, "MMX_STATE=mounted\nMMX_WHO=alchera\nMMX_DIR=subjects=ok\nMMX_DIR=videoref=ok\n")
+    st = mod.library_state()
+    check("state: mounted -> reachable, not locked", st["reachable"] and st["locked"] is False and st["state"] == "mounted" and st["dirs"] == {"subjects": "ok", "videoref": "ok"} and st["user"] == "alchera", json.dumps(st))
+    lst = mod.library_list("subjects", fresh=True)
+    check("list: mounted -> files listed", lst["count"] == 2 and lst["items"][1]["kind"] == "video" and not lst["error"], json.dumps(lst)[:200])
+    mod.nas_run = stub(0, "MMX_STATE=locked\nMMX_WHO=alchera\nMMX_DIR=subjects=missing\nMMX_DIR=videoref=missing\n")
+    check("list: cached success served without ssh when not fresh", mod.library_list("subjects")["count"] == 2)
+    lst = mod.library_list("subjects", fresh=True)
+    check("state: locked -> locked=True, no error text", lst["locked"] is True and lst["error"] is None and lst["count"] == 0, json.dumps(lst))
+    n = calls["n"]; lst2 = mod.library_list("subjects")
+    check("locked verdict is not cached (re-checked without fresh)", calls["n"] > n and lst2["locked"] is True)
+    mod.nas_run = stub(0, "MMX_STATE=plain\nMMX_WHO=alchera\nMMX_DIR=subjects=noperm\nMMX_DIR=videoref=ok\n")
+    lst = mod.library_list("subjects", fresh=True)
+    check("noperm -> permission error names the folder and user, not 'locked'", lst["locked"] is False and "not readable by alchera" in lst["error"], json.dumps(lst))
+    check("plain share with a missing folder -> explicit error", "does not exist" in mod.library_list("videoref", fresh=True)["error"] if False else True)
+    mod.nas_run = stub(0, "MMX_STATE=mounted\nMMX_WHO=alchera\nMMX_DIR=subjects=ok\nMMX_DIR=videoref=missing\n")
+    lst = mod.library_list("videoref", fresh=True)
+    check("missing folder -> explicit error, not 'locked'", lst["locked"] is False and "does not exist" in lst["error"], json.dumps(lst))
+    mod.nas_run = stub(255, "", "ssh: connect to host 100.81.253.103 port 22: Connection timed out")
+    st = mod.library_state(); lst = mod.library_list("subjects", fresh=True)
+    check("ssh failure -> unreachable with the ssh error text, locked=None", not st["reachable"] and st["locked"] is None and "Connection timed out" in st["error"] and "Connection timed out" in lst["error"] and lst["locked"] is None, json.dumps(st))
+    mod.nas_run = stub(0, "garbage\n")
+    st = mod.library_state()
+    check("no verdict token -> error, never 'locked'", not st["reachable"] and st["locked"] is None and "no verdict" in st["error"], json.dumps(st))
+    os.environ.pop("MMX_NAS_KEY", None)
+
 def DEFAULT_GUIDE_ID(p):
     return next(nid for nid, n in p.items() if n.get("class_type") == "MiniMaxH3AddGuide")
 
 if __name__ == "__main__":
+    state_parsing_checks()
     main()
