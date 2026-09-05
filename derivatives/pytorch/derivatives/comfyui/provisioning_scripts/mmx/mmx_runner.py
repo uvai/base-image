@@ -347,7 +347,15 @@ def library_local_file(path):
         return p
     dest = os.path.join(cache_dir(), "lib", path)
     if not os.path.isfile(dest):
-        nas_fetch(path, dest)
+        try:
+            nas_fetch(path, dest)
+        except RuntimeError as e:
+            st = library_state()
+            if st.get("locked"):
+                raise RuntimeError(f"NAS share is locked — unlock it in the vgo dashboard, then retry ({path})")
+            if not st.get("reachable"):
+                raise RuntimeError(f"NAS unreachable from the instance: {st.get('error')} ({path})")
+            raise
     return dest
 
 def library_thumb(path):

@@ -80,9 +80,31 @@ used by the tests), `MMX_CACHE`.
 State surfaced to the page: `locked` (share not mounted → panes say so), `error` (unreachable /
 missing folder), `reachable`.
 
-## Not verified without a live GPU
+## Live check 2026-09-05 (RTX PRO 6000, hybrid int8 UNET, turbo LoRA, acc LoRA off — not on the box)
 
-- A real segment through the hybrid model with the injected guide node (fl2va keyframe on the
-  ref2va path with the acc + turbo LoRAs). The graph is built and validated against the mock and the
-  node source; the PSNR number reported on the Run tile is the acceptance measure once it runs.
-- OpenRouter auto-prompt round trip (key plumbing is tested; the model call is not).
+Job `mmx_v2_livecheck2`: 2 × 2 s at 608×320, auto-prompt on (gemini-3-flash-preview), guide
+continuation. Both segments rendered (27 s + 15 s), generated prompts captured from node 186,
+concat produced. Continuity numbers (PSNR, ffmpeg, dB):
+
+| pair | dB |
+|---|---|
+| h264 codec floor (last-frame PNG vs the same frame decoded from the mp4, CRF 12) | 37.5 |
+| adjacent frames inside segment 1 / segment 2 | 26.3 / 22.1 |
+| **hard: seg 1 last frame vs seg 2 first frame (injected guide)** | **22.7** |
+| soft: slot-9 reference vs seg 1 first frame (ref2va hint only) | 7.2 |
+
+So the guide makes the join as similar as two consecutive frames of the same clip (same
+framing, composition and zoom; regeneration texture differs), versus a different crop entirely on
+the soft path. It is not pixel-identical: the model regenerates frame 0 from the keyframe latent
+(the same mechanism ComfyUI's own `video_minimax_h3_i2v_continuation` template uses), and > 40 dB
+is unreachable through the h264 path anyway (floor 37.5). Things not yet tried that could raise it:
+`options.continuation_unet`, more sampler steps for segments 2+, the acc LoRA (was absent).
+
+## Not verified
+
+- A fresh Vast rent end to end (needs the Vast CLI on the Mac). The deploy path was exercised by
+  re-fetching `additional_params.sh` from raw main on the live box and running it under PID 1's
+  environment, which is what a boot does; `/health` then reported `comfy: true, openrouter_key: true`.
+- `vgo studio` on the Mac itself (syntax-checked here: `bash -n`, embedded Python compiled, page JS
+  `node --check`).
+- The runner with the acc LoRA on, and reference videos/audio on real hardware (mock only).
