@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# vgo — Vast.ai MiniMax helper. v21: mmx studio v2 — forwards the mmx runner (8190)
+# vgo — Vast.ai MiniMax helper. v21.1: `vgo studio` no longer feeds the runner's /health JSON to python as source (NameError 'true'); forward first, health non-fatal. v21: mmx studio v2 — forwards the mmx runner (8190)
 # wherever 8188 is forwarded, `vgo studio` ensures the forward and opens
 # ~/.local/share/mmx/mmx_studio.html, and the dashboard header shows the runner
 # (up / key loaded) from localhost:8190/health on the instance. v20: built-in instance terminal card (xterm.js over
@@ -67,24 +67,39 @@ case "${1:-shell}" in
   status) exec ssh "${SSHOPTS[@]}" root@"$HOST" 'du -sh /workspace/ComfyUI/models/* 2>/dev/null; curl -sf http://127.0.0.1:8188 >/dev/null && echo "ComfyUI: UP" || echo "ComfyUI: not yet"' ;;
   ip)     echo "$HOST $PORT"; exit 0 ;;
   studio)
-    # mmx studio: the page talks to localhost:8190 (runner on the instance). Reuse a
-    # live forward, replace a dead one, else open a fresh best-effort tunnel.
+    # mmx studio: the page talks to localhost:8190 (runner on the instance).
+    # Order matters: (1) make sure the forward exists, (2) a best-effort health line that
+    # can never abort the script, (3) open the page. The v21.0 version piped the /health
+    # JSON into `python3 -` as SOURCE (two stdin redirections, the file won) and died with
+    # NameError: name 'true' is not defined before anything else ran.
     STUDIO="${VGO_STUDIO:-$HOME/.local/share/mmx/mmx_studio.html}"
-    if ! curl -sf -o /dev/null --max-time 3 http://127.0.0.1:8190/health; then
+    if curl -sf -o /dev/null --max-time 3 http://127.0.0.1:8190/health 2>/dev/null; then
+        echo "[vgo] 8190 already forwarded and answering — reusing" >&2
+    else
         if lsof -nP -iTCP:8190 -sTCP:LISTEN >/dev/null 2>&1; then
-            echo "[vgo] stale forward on 8190 — replacing" >&2
-            pkill -f 'ssh.*-L 8190' 2>/dev/null; sleep 1
+            echo "[vgo] stale forward on 8190 (listening but dead) — replacing" >&2
+            pkill -f 'ssh.*-L 8190' 2>/dev/null || true; sleep 1
         fi
-        ssh "${SSHOPTS[@]}" -o ExitOnForwardFailure=yes root@"$HOST" -fN -L 8190:127.0.0.1:8190 \
-            && echo "[vgo] runner forward opened (8190)" >&2 \
-            || echo "[vgo] WARN: could not forward 8190 (is another vgo holding it?)" >&2
+        if ssh "${SSHOPTS[@]}" -o ExitOnForwardFailure=yes root@"$HOST" -fN -L 8190:127.0.0.1:8190 2>/dev/null; then
+            echo "[vgo] runner forward opened (8190)" >&2
+        else
+            echo "[vgo] WARN: could not forward 8190 (is another vgo holding it?) — opening the page anyway" >&2
+        fi
     fi
-    if curl -sf --max-time 4 http://127.0.0.1:8190/health >/tmp/vgo_mmx_health.json 2>/dev/null; then
-        python3 - <<'PY' </tmp/vgo_mmx_health.json
-import json,sys
-h=json.load(sys.stdin)
-print("[vgo] runner v%s: comfy %s, openrouter key %s" % (h.get("version","?"), "up" if h.get("comfy") else "not yet", "loaded" if h.get("openrouter_key") else "MISSING"), file=sys.stderr)
-PY
+    # health: JSON goes in on stdin and through json.loads — never spliced into code
+    HJSON="$(curl -sf --max-time 4 http://127.0.0.1:8190/health 2>/dev/null || true)"
+    if [ -n "$HJSON" ]; then
+        printf '%s' "$HJSON" | python3 -c '
+import json, sys
+raw = sys.stdin.read()
+try:
+    h = json.loads(raw)
+    print("[vgo] runner v%s: comfy %s, openrouter key %s" % (
+        h.get("version", "?"), "up" if h.get("comfy") else "not yet",
+        "loaded" if h.get("openrouter_key") else "MISSING"), file=sys.stderr)
+except Exception as e:
+    print("[vgo] WARN: runner /health unparsable (%s): %r" % (e, raw[:120]), file=sys.stderr)
+' || echo "[vgo] WARN: health check failed (ignored)" >&2
     else
         echo "[vgo] runner not answering on 8190 yet (instance still provisioning?) — the page will show it red until it is" >&2
     fi
