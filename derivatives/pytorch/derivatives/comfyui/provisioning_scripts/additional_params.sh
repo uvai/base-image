@@ -130,6 +130,24 @@ else
     echo "[additional_params] WARN: no ComfyUI main.py found — manager/refpack skipped"
 fi
 
+# ── 3b. mmx-comfy-nodes (MMX preset / sequence / chain nodes) ────────────────
+# Same mechanism as the RefPack: clone into custom_nodes before ComfyUI starts; a re-run
+# fast-forwards an existing clone. The preset store lives in /workspace/mmx/presets.json and
+# the pack mirrors it from/to the NAS share over the nas_worker's ssh path on load.
+if [ -n "$CUI" ]; then
+    mkdir -p /workspace/mmx
+    MMXN="$CUI/custom_nodes/mmx-comfy-nodes"
+    if [ ! -d "$MMXN/.git" ]; then
+        git clone --depth 1 https://github.com/uvai/mmx-comfy-nodes "$MMXN" >/dev/null 2>&1 \
+            && echo "[additional_params] mmx-comfy-nodes installed -> $MMXN" \
+            || echo "[additional_params] WARN: mmx-comfy-nodes clone failed"
+    else
+        git -C "$MMXN" pull -q --ff-only >/dev/null 2>&1 && echo "[additional_params] mmx-comfy-nodes updated" \
+            || echo "[additional_params] mmx-comfy-nodes present (pull skipped)"
+    fi
+    [ -f "$MMXN/requirements.txt" ] && python3 -m pip install -q -r "$MMXN/requirements.txt" >/dev/null 2>&1
+fi
+
 # ── 4. mmx runner (headless MiniMax studio backend, port 8190) ───────────────
 # Fetched from this repo's main so the studio's canonical backend rides with
 # the provisioning script; the runner inherits the Vast template env here

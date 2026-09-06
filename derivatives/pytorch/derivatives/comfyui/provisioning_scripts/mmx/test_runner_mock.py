@@ -62,7 +62,7 @@ def main():
     mock = subprocess.Popen([sys.executable, os.path.join(HERE, "mock_comfy.py"), "--port", str(MOCK_PORT)], env=env,
                             stdout=open(os.path.join(TMP, "mock.log"), "w"), stderr=subprocess.STDOUT)
     renv = {**os.environ, "MMX_LIBRARY_ROOT": LIB, "MMX_CACHE": os.path.join(TMP, "cache"), "COMFY_OUTPUT": MOCK_OUT,
-            "OPENROUTER_KEY": "sk-or-test-1234", "MMX_PORT": str(RUN_PORT)}
+            "OPENROUTER_KEY": "sk-or-test-1234", "MMX_PORT": str(RUN_PORT), "MMX_PRESETS": os.path.join(TMP, "mmx", "presets.json")}
     renv.pop("OPENROUTER_API_KEY", None)
     runner = subprocess.Popen([sys.executable, os.path.join(HERE, "mmx_runner.py"), "--port", str(RUN_PORT), "--comfy", f"http://127.0.0.1:{MOCK_PORT}"],
                               env=renv, stdout=open(os.path.join(TMP, "runner.log"), "w"), stderr=subprocess.STDOUT)
@@ -207,6 +207,26 @@ def main():
         noslot9["segments"] = [{"prompt": "<Picture 1> alone", "seconds": 1, "aspect": "16:9", "megapixels": 0.06}]
         st, r = api("/job", noslot9); j = wait_job(r["job"]); s1 = json.load(open(SUBMITTED))[-1]
         check("no slot 9: segment 1 has no guide and no clause", j["state"] == "done" and not any(n.get("class_type") in ("MiniMaxH3AddGuide", "StringConcatenate") for n in s1.values()) and j["segments"][0]["guided"] is False, j.get("error") or "")
+
+        # presets store shared with the canvas nodes
+        os.makedirs(os.path.join(TMP, "mmx"), exist_ok=True)
+        json.dump({"version": 1, "updated": 1.0, "presets": [
+            {"name": "walk", "prompt": "<Picture 1> walks toward <Picture 9>.", "loras": [{"name": "H3_Motion_BoosterV2.safetensors", "strength": 0.7}], "notes": "", "created": 1.0, "updated": 1.0},
+            {"name": "still", "prompt": "<Picture 1> holds still.", "loras": [], "notes": "", "created": 1.0, "updated": 1.0}]},
+            open(os.path.join(TMP, "mmx", "presets.json"), "w"))
+        st, pr = api("/presets")
+        check("GET /presets lists the shared store", st == 200 and pr["names"] == ["still", "walk"] and pr["presets"][1]["loras"][0]["strength"] == 0.7, json.dumps(pr)[:200])
+        ps = json.loads(json.dumps(base)); ps["name"] = "t_preset"
+        ps["segments"] = [{"preset": "walk", "seconds": 1, "aspect": "16:9", "megapixels": 0.06},
+                          {"preset": "still", "prompt": "inline wins: <Picture 1> waves.", "seconds": 1, "aspect": "16:9", "megapixels": 0.06, "loras": [{"name": "side_fuck_h3_000000750.safetensors", "strength": 0.5}]}]
+        st, v = api("/validate", ps)
+        check("validate resolves preset prompt (+ remap)", st == 200 and v["ok"] and v["segments"][0]["prompt"] == "<Picture 1> walks toward <Picture 3>.", json.dumps(v)[:300])
+        st, r = api("/job", ps); j = wait_job(r["job"]); sub = json.load(open(SUBMITTED))
+        check("preset segment: prompt + loras from the store", j["state"] == "done" and sub[-2]["137"]["inputs"]["lora_2"]["lora"] == "H3_Motion_BoosterV2.safetensors" and sub[-2]["137"]["inputs"]["lora_2"]["strength"] == 0.7 and j["segments"][0]["preset"] == "walk", j.get("error") or json.dumps(sub[-2]["137"]["inputs"])[:200])
+        check("inline prompt/loras override the preset's", sub[-1]["185"]["inputs"]["direction"].startswith("inline wins") and sub[-1]["137"]["inputs"]["lora_2"]["lora"] == "side_fuck_h3_000000750.safetensors")
+        bad_ps = json.loads(json.dumps(ps)); bad_ps["segments"][0]["preset"] = "ghost"
+        st, r = api("/job", bad_ps)
+        check("unknown preset -> 400 naming it and the store path", st == 400 and "ghost" in r["error"] and "presets.json" in r["error"], json.dumps(r))
 
         # missing LoRA -> exact name in the error
         miss = json.loads(json.dumps(base)); miss["name"] = "t_missing"; miss["segments"][0]["loras"] = [{"name": "NotThere.safetensors"}]

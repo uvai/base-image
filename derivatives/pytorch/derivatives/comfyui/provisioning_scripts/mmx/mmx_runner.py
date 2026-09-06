@@ -38,7 +38,8 @@ Spec v2 (v1 specs with refs/first_frame are upgraded on arrival):
       "videos": [{"slot": 1..3, "src": SRC, "use_soundtrack": true}],
       "audios": [{"slot": 1..3, "src": SRC}]
     },
-    "segments": [{"prompt", "seconds", "aspect", "megapixels", "seed", "loras": [{"name", "strength"}]}],
+    "segments": [{"prompt", "seconds", "aspect", "megapixels", "seed", "loras": [{"name", "strength"}],
+                  "preset": "<name in presets.json>"}],   # alternative to inline prompt+loras (see PRESETS)
     "concat": true,
     "options": {"seed", "seed_mode", "fps", "aspect", "megapixels", "seconds",
                 "auto_prompt": {"enabled", "model", "reasoning"},
@@ -52,11 +53,16 @@ Spec v2 (v1 specs with refs/first_frame are upgraded on arrival):
   }
   SRC = {"kind": "local", "name": "x.png", "data": "<base64>"}
       | {"kind": "library", "path": "Subjects/j/j1.jpg"}    # fetched from the NAS by the runner
+
+PRESETS: the mmx-comfy-nodes store (/workspace/mmx/presets.json, env MMX_PRESETS) is shared with
+the canvas nodes. A segment with "preset": name takes its prompt and LoRAs from the store; a
+non-empty inline "prompt" or "loras" on that segment overrides the corresponding field.
+GET /presets lists the store.
 """
 import argparse, base64, copy, hashlib, http.server, json, mimetypes, os, random, re, shutil
 import subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request, urllib.error, uuid
 
-VERSION = "2.3"
+VERSION = "2.4"
 COMFY = "http://127.0.0.1:8188"
 OUTPUT_CANDIDATES = ["/workspace/ComfyUI/output", "/ComfyUI/output", "/root/ComfyUI/output"]
 JOBS = {}
@@ -521,7 +527,7 @@ def new_job(spec):
     for i, s in enumerate(spec.get("segments", [])):
         job["segments"].append({"index": i, "state": "pending", "prompt": s.get("prompt", ""),
                                 "direction": None, "generated_prompt": None, "references": None,
-                                "loras": s.get("loras") or [], "continuity_psnr": None, "guided": False, "guide_source": None, "clause": None,
+                                "loras": s.get("loras") or [], "preset": s.get("preset"), "continuity_psnr": None, "guided": False, "guide_source": None, "clause": None,
                                 "seconds": s.get("seconds"), "aspect": s.get("aspect"),
                                 "seed": None, "prompt_id": None, "video": None, "lastframe": None,
                                 "started": None, "finished": None, "error": None})
@@ -1119,6 +1125,48 @@ def check_spec(spec):
     if mode and mode not in FIRST_FRAME_MODES: raise ValueError(f"first_frame_mode must be one of {FIRST_FRAME_MODES}")
     slot_table(spec)
 
+def presets_path():
+    p = os.environ.get("MMX_PRESETS")
+    if p: return p
+    return "/workspace/mmx/presets.json" if os.path.isdir("/workspace") else os.path.join(tempfile.gettempdir(), "mmx", "presets.json")
+
+def load_presets():
+    """{name: preset} from the shared store; empty when the file is absent or unreadable."""
+    try:
+        data = json.load(open(presets_path(), encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        raise RuntimeError(f"presets store {presets_path()} unreadable: {e}")
+    items = data.get("presets") if isinstance(data, dict) else data
+    out = {}
+    for p in items or []:
+        if isinstance(p, dict) and p.get("name"):
+            out[p["name"]] = {"name": p["name"], "prompt": p.get("prompt") or "",
+                              "loras": [{"name": l["name"], "strength": float(l.get("strength", 0.85))} for l in (p.get("loras") or []) if isinstance(l, dict) and l.get("name")],
+                              "notes": p.get("notes") or "", "updated": p.get("updated")}
+    return out
+
+def resolve_presets(spec):
+    """Fill prompt/loras from the preset store for segments that name a preset (in place).
+    Inline non-empty prompt / non-empty loras win over the preset's."""
+    names = [s.get("preset") for s in spec.get("segments") or [] if s.get("preset")]
+    if not names:
+        return spec
+    store = load_presets()
+    missing = [n for n in names if n not in store]
+    if missing:
+        raise ValueError("preset not in the store " + presets_path() + ": " + ", ".join(sorted(set(missing))))
+    for s in spec["segments"]:
+        n = s.get("preset")
+        if not n: continue
+        p = store[n]
+        if not (s.get("prompt") or "").strip(): s["prompt"] = p["prompt"]
+        if not s.get("loras"): s["loras"] = [dict(l) for l in p["loras"]]
+        s["preset_resolved"] = {"name": n, "updated": p["updated"]}
+    return spec
+
+
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a): pass
 
@@ -1174,6 +1222,12 @@ class H(http.server.BaseHTTPRequestHandler):
             except Exception as e:
                 return self._json({"error": str(e)}, 502)
             return self._bytes(data, "image/jpeg", cache="private, max-age=3600")
+        if u.path == "/presets":
+            try:
+                store = load_presets()
+            except Exception as e:
+                return self._json({"error": str(e), "path": presets_path()}, 502)
+            return self._json({"path": presets_path(), "names": sorted(store), "presets": [store[k] for k in sorted(store)]})
         if u.path == "/jobs":
             return self._json([{k: j[k] for k in ("id", "name", "state", "phase", "created")} for j in JOBS.values()])
         if u.path.startswith("/job/"):
@@ -1195,6 +1249,7 @@ class H(http.server.BaseHTTPRequestHandler):
             try:
                 spec = upgrade_spec(json.loads(raw))
                 check_spec(spec)
+                resolve_presets(spec)
             except Exception as e:
                 return self._json({"error": f"bad spec: {e}"}, 400)
             plans, errors = plan_segments(spec)
