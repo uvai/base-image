@@ -127,6 +127,17 @@ drag hovering within 56 px of a scroll container's top/bottom edge auto-scrolls 
 static position on scroll-into-view (keyboard focus, automated drags), which yanked the column
 mid-drag and cancelled the drop.
 
+## Canvas presets: mmx-comfy-nodes
+
+`https://github.com/uvai/mmx-comfy-nodes` (installed by `additional_params.sh` next to the RefPack)
+puts prompt + LoRA presets on the canvas: **MMX Preset** (dropdown → model/clip with the LoRAs
+applied + prompt STRING), **MMX Preset Save** (OUTPUT_NODE, writes the store and mirrors it to the
+NAS), **MMX Sequence** (8 slots + index for chained runs) and two chain helpers. The store is
+`/workspace/mmx/presets.json`, mirrored from/to `/volume1/subgenula/mmx/presets.json`; runner ≥ 2.4
+reads it too: a segment may say `"preset": "walk"` instead of inline prompt + loras, and
+`GET /presets` lists it. See that repo's README for the sequence/chain pattern and the example
+workflow.
+
 ## Live check 2026-09-05 (RTX PRO 6000, hybrid int8 UNET, turbo LoRA, acc LoRA off — not on the box)
 
 Job `mmx_v2_livecheck2`: 2 × 2 s at 608×320, auto-prompt on (gemini-3-flash-preview), guide
