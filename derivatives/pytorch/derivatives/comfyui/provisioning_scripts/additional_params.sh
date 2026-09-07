@@ -130,7 +130,7 @@ else
     echo "[additional_params] WARN: no ComfyUI main.py found — manager/refpack skipped"
 fi
 
-# ── 3b. mmx-comfy-nodes (MMX preset / sequence / chain nodes) ────────────────
+# ── 3b. mmx-comfy-nodes (MMX preset / sequence / chain / library nodes) ──────
 # Same mechanism as the RefPack: clone into custom_nodes before ComfyUI starts; a re-run
 # fast-forwards an existing clone. The preset store lives in /workspace/mmx/presets.json and
 # the pack mirrors it from/to the NAS share over the nas_worker's ssh path on load.
@@ -146,6 +146,22 @@ if [ -n "$CUI" ]; then
             || echo "[additional_params] mmx-comfy-nodes present (pull skipped)"
     fi
     [ -f "$MMXN/requirements.txt" ] && python3 -m pip install -q -r "$MMXN/requirements.txt" >/dev/null 2>&1
+
+    # ── 3c. library mirror for MMX Library Image ─────────────────────────────
+    # /volume1/subgenula/{Subjects,VideoRef,Sets} -> /workspace/mmx/library, over the
+    # nas_worker's ssh path (the script waits up to 10 min for tailscale + the key, since
+    # mmx_extras' worker brings them up in parallel). Locked share / unreachable NAS = logged
+    # skip, the node still works on whatever is mirrored. Re-run from the node's
+    # "Mirror from NAS" button (POST /mmx/library/refresh?sync=1).
+    if [ -f "$MMXN/tools/mmx_library_sync.sh" ]; then
+        cp -f "$MMXN/tools/mmx_library_sync.sh" /root/mmx_library_sync.sh && chmod +x /root/mmx_library_sync.sh
+        mkdir -p /workspace/mmx/library
+        export NAS_DEST="${NAS_DEST:-}"
+        setsid nohup /root/mmx_library_sync.sh --wait >/dev/null 2>&1 < /dev/null &
+        echo "[additional_params] mmx library mirror detached (pid $!; log: /workspace/mmx_library_sync.log)"
+    else
+        echo "[additional_params] WARN: mmx_library_sync.sh not in the pack — library mirror skipped"
+    fi
 fi
 
 # ── 4. mmx runner (headless MiniMax studio backend, port 8190) ───────────────
