@@ -98,6 +98,24 @@ else
     echo "[additional_params] DOWNLOAD_KLEIN not set — MiniMax-only session"
 fi
 
+# ── 2b. OpenRouter key for ComfyUI itself ────────────────────────────────────
+# The Vast template carries the key as OPENROUTER_KEY; the RefPack's References Manager reads
+# OPENROUTER_API_KEY / LLM_KEY. Export it under the stock name here (covers a sourced hook) AND
+# patch the export into /start.sh right before the ComfyUI launch line (covers a hook run as a
+# child process, where our exports would not reach ComfyUI). mmx-comfy-nodes bridges it from
+# PID 1's env inside the process as a third fallback, and MMX References Manager reads
+# OPENROUTER_KEY itself. Idempotent: the marker line is added once.
+export OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-${OPENROUTER_KEY:-${LLM_KEY:-}}}"
+if [ -f /start.sh ] && ! grep -q "mmx: OPENROUTER_API_KEY" /start.sh; then
+    LN=$(grep -n 'main\.py" --listen\|main\.py --listen\|python.*main\.py' /start.sh | head -1 | cut -d: -f1)
+    if [ -n "$LN" ]; then
+        sed -i "${LN}i export OPENROUTER_API_KEY=\"\${OPENROUTER_API_KEY:-\${OPENROUTER_KEY:-\${LLM_KEY:-}}}\"  # mmx: OPENROUTER_API_KEY for the References Manager" /start.sh \
+            && echo "[additional_params] OPENROUTER_API_KEY export patched into /start.sh before line $LN"
+    else
+        echo "[additional_params] WARN: no ComfyUI launch line found in /start.sh — key export not patched (the pack's PID-1 bridge still applies)"
+    fi
+fi
+
 # ── 3. ComfyUI Manager + MiniMax RefPack ─────────────────────────────────────
 # v4 image: the app lives at /ComfyUI (not /workspace/ComfyUI) and the H3
 # reference workflow needs Hearmeman24/ComfyUI-MiniMaxRefPack, whose registry
@@ -130,10 +148,12 @@ else
     echo "[additional_params] WARN: no ComfyUI main.py found — manager/refpack skipped"
 fi
 
-# ── 3b. mmx-comfy-nodes (MMX preset / sequence / chain / library nodes) ──────
+# ── 3b. mmx-comfy-nodes (MMX preset / sequence / chain / library / deck nodes) ──
 # Same mechanism as the RefPack: clone into custom_nodes before ComfyUI starts; a re-run
-# fast-forwards an existing clone. The preset store lives in /workspace/mmx/presets.json and
-# the pack mirrors it from/to the NAS share over the nas_worker's ssh path on load.
+# fast-forwards an existing clone. The preset store (/workspace/mmx/presets.json) and the Deck's
+# phrase chips (/workspace/mmx/phrases.json) are both mirrored from/to the NAS share
+# (/volume1/subgenula/mmx/) by the pack itself on load and after every save — the same
+# transport, so a re-rent restores presets and phrases together (deletions carry tombstones).
 if [ -n "$CUI" ]; then
     mkdir -p /workspace/mmx
     MMXN="$CUI/custom_nodes/mmx-comfy-nodes"

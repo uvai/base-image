@@ -62,7 +62,7 @@ GET /presets lists the store.
 import argparse, base64, copy, hashlib, http.server, json, mimetypes, os, random, re, shutil
 import subprocess, sys, tempfile, threading, time, urllib.parse, urllib.request, urllib.error, uuid
 
-VERSION = "2.4"
+VERSION = "2.5"
 COMFY = "http://127.0.0.1:8188"
 OUTPUT_CANDIDATES = ["/workspace/ComfyUI/output", "/ComfyUI/output", "/root/ComfyUI/output"]
 JOBS = {}
@@ -1162,7 +1162,7 @@ def resolve_presets(spec):
         if not n: continue
         p = store[n]
         if not (s.get("prompt") or "").strip(): s["prompt"] = p["prompt"]
-        if not s.get("loras"): s["loras"] = [dict(l) for l in p["loras"]]
+        if not s.get("loras"): s["loras"] = [{"name": l["name"], "strength": l.get("strength", 0.85)} for l in p["loras"] if l.get("on", True) is not False]   # a row switched off in the Deck is skipped
         s["preset_resolved"] = {"name": n, "updated": p["updated"]}
     return spec
 

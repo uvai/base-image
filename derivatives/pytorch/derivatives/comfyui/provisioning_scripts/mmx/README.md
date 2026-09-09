@@ -129,6 +129,14 @@ mid-drag and cancelled the drop.
 
 ## Canvas presets: mmx-comfy-nodes
 
+0.3 (2026-09-09) adds the deck build for the daily graph (`examples/deck.json` in that repo):
+MMX Deck (prompt constructor + preset manager, phrases mirrored to `mmx/phrases.json`), MMX LoRA
+Stack (replaces the Power Lora Loader; plain widgets), Library → References Manager injection,
+an MMX References Manager drop-in, and a skippable First Frame Check. `additional_params.sh`
+section 2b now exports `OPENROUTER_API_KEY` from `OPENROUTER_KEY` for ComfyUI itself (and patches
+the export into `/start.sh` before the launch line) so the stock References Manager finds the
+key. Runner 2.5 skips preset LoRA rows switched off in the Deck (`"on": false`).
+
 `https://github.com/uvai/mmx-comfy-nodes` (installed by `additional_params.sh` next to the RefPack)
 puts prompt + LoRA presets on the canvas: **MMX Preset** (dropdown → model/clip with the LoRAs
 applied + prompt STRING), **MMX Preset Save** (OUTPUT_NODE, writes the store and mirrors it to the
