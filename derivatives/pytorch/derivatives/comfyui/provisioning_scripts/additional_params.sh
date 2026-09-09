@@ -149,8 +149,8 @@ else
 fi
 
 # ── 3b. mmx-comfy-nodes (MMX preset / sequence / chain / library / deck nodes) ──
-# Same mechanism as the RefPack: clone into custom_nodes before ComfyUI starts; a re-run
-# fast-forwards an existing clone. The preset store (/workspace/mmx/presets.json) and the Deck's
+# Clone into custom_nodes before ComfyUI starts and reset to origin/main on EVERY boot (a
+# fresh instance never runs behind the workflow files); the commit is logged. The preset store (/workspace/mmx/presets.json) and the Deck's
 # phrase chips (/workspace/mmx/phrases.json) are both mirrored from/to the NAS share
 # (/volume1/subgenula/mmx/) by the pack itself on load and after every save — the same
 # transport, so a re-rent restores presets and phrases together (deletions carry tombstones).
@@ -161,18 +161,26 @@ if [ -n "$CUI" ]; then
         git clone --depth 1 https://github.com/uvai/mmx-comfy-nodes "$MMXN" >/dev/null 2>&1 \
             && echo "[additional_params] mmx-comfy-nodes installed -> $MMXN" \
             || echo "[additional_params] WARN: mmx-comfy-nodes clone failed"
-    else
-        git -C "$MMXN" pull -q --ff-only >/dev/null 2>&1 && echo "[additional_params] mmx-comfy-nodes updated" \
-            || echo "[additional_params] mmx-comfy-nodes present (pull skipped)"
+    fi
+    # EVERY boot: bring the pack to origin/main. A plain `pull --ff-only` on a shallow / detached
+    # / locally-edited clone silently stays behind, so fetch the tip and reset to it, then log the
+    # commit so the boot log says exactly which pack the workflow files are running against.
+    if [ -d "$MMXN/.git" ]; then
+        if git -C "$MMXN" fetch -q --depth 1 origin main 2>/dev/null \
+           && git -C "$MMXN" reset -q --hard origin/main 2>/dev/null; then
+            echo "[additional_params] mmx-comfy-nodes at $(TZ=UTC git -C "$MMXN" log -1 --format='%h %cd %s' --date=format-local:%Y-%m-%dT%H:%MZ 2>/dev/null) (origin/main)"
+        else
+            echo "[additional_params] WARN: mmx-comfy-nodes update failed — running $(git -C "$MMXN" log -1 --format='%h %s' 2>/dev/null || echo 'unknown commit')"
+        fi
     fi
     [ -f "$MMXN/requirements.txt" ] && python3 -m pip install -q -r "$MMXN/requirements.txt" >/dev/null 2>&1
 
     # ── 3c. library mirror for MMX Library Image ─────────────────────────────
-    # /volume1/subgenula/{Subjects,VideoRef,Sets} -> /workspace/mmx/library, over the
-    # nas_worker's ssh path (the script waits up to 10 min for tailscale + the key, since
-    # mmx_extras' worker brings them up in parallel). Locked share / unreachable NAS = logged
-    # skip, the node still works on whatever is mirrored. Re-run from the node's
-    # "Mirror from NAS" button (POST /mmx/library/refresh?sync=1).
+    # /volume1/subgenula/{Subjects,VideoRef,Sets} (recursive) -> /workspace/mmx/library, over
+    # the nas_worker's ssh path. With --wait the script polls every 60 s for up to 2 h until the
+    # NAS is reachable AND the share is unlocked (the share is usually still locked at boot),
+    # then mirrors; the node's "Mirror from NAS" button re-runs it as a single attempt. The
+    # Library Image node shows the last mirror log line while the library is empty.
     if [ -f "$MMXN/tools/mmx_library_sync.sh" ]; then
         cp -f "$MMXN/tools/mmx_library_sync.sh" /root/mmx_library_sync.sh && chmod +x /root/mmx_library_sync.sh
         mkdir -p /workspace/mmx/library
