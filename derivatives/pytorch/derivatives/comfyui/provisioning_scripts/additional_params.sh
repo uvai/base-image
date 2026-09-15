@@ -192,6 +192,47 @@ if [ -n "$CUI" ]; then
     fi
 fi
 
+# ── 3d. REQUIRED_PACKS: custom-node packs the daily workflows depend on ──────
+# One line per pack: "<git url>[|<pip deps>]". Clone if missing, otherwise fetch + reset to the
+# remote default branch on EVERY boot (same reasoning as 3b), install requirements.txt and any
+# listed pip deps, and log one line per pack. A present/missing summary closes the section, so
+# the boot log states plainly whether a fresh rent can load the workflows.
+if [ -n "$CUI" ]; then
+    CN="$CUI/custom_nodes"; mkdir -p "$CN"
+    REQUIRED_PACKS=(
+        "https://github.com/Adudeguyman/ComfyUI-H3-Project-Suite|av numpy"   # latent-space chaining (H3 Context / Project Hub)
+        "https://github.com/Luisacaotica/ComfyUI-MiniMaxH3Mod"               # RefMods (character adapters through conditioning)
+    )
+    # the Project Suite refuses to load next to its ancestor pack
+    if [ -d "$CN/ComfyUI-H3-Motion-Context" ]; then
+        rm -rf "$CN/ComfyUI-H3-Motion-Context" && echo "[additional_params] removed ComfyUI-H3-Motion-Context (conflicts with H3-Project-Suite)"
+    fi
+    PACKS_OK=(); PACKS_MISSING=()
+    for spec in "${REQUIRED_PACKS[@]}"; do
+        url="${spec%%|*}"; deps=""; [ "$spec" != "$url" ] && deps="${spec#*|}"
+        name="$(basename "$url" .git)"; dir="$CN/$name"
+        if [ ! -d "$dir/.git" ]; then
+            git clone --depth 1 "$url" "$dir" >/dev/null 2>&1 \
+                && echo "[additional_params] $name installed -> $dir" \
+                || echo "[additional_params] WARN: $name clone failed"
+        elif git -C "$dir" fetch -q --depth 1 origin 2>/dev/null; then
+            def="$(git -C "$dir" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||')"
+            [ -z "$def" ] && def="$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+            git -C "$dir" reset -q --hard "origin/${def:-main}" 2>/dev/null || true
+        fi
+        if [ -d "$dir/.git" ]; then
+            [ -f "$dir/requirements.txt" ] && python3 -m pip install -q -r "$dir/requirements.txt" >/dev/null 2>&1
+            [ -n "$deps" ] && python3 -m pip install -q $deps >/dev/null 2>&1
+            echo "[additional_params] $name at $(git -C "$dir" log -1 --format='%h %s' 2>/dev/null | cut -c1-70)"
+            PACKS_OK+=("$name")
+        else
+            PACKS_MISSING+=("$name")
+        fi
+    done
+    echo "[additional_params] packs present: ${PACKS_OK[*]:-none}"
+    [ ${#PACKS_MISSING[@]} -gt 0 ] && echo "[additional_params] WARN: packs MISSING: ${PACKS_MISSING[*]} — workflows using them will show missing node types"
+fi
+
 # ── 4. mmx runner (headless MiniMax studio backend, port 8190) ───────────────
 # Fetched from this repo's main so the studio's canonical backend rides with
 # the provisioning script; the runner inherits the Vast template env here
