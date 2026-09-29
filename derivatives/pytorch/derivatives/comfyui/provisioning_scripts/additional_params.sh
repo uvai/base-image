@@ -18,6 +18,18 @@
 # integrity natively — no size heuristics or .aria2 checks needed. Keep aria2
 # for non-hf.co hosts only.
 
+# ── 0. pip guard: keep huggingface-hub below 2.0 ─────────────────────────────
+# huggingface-hub 2.0.0 (Sep 2026) breaks this image's transformers, which
+# hard-requires >=1.5,<2.0 — ComfyUI then dies at import. Any pack
+# requirements.txt or a bare `pip install -U huggingface_hub` would pull it in.
+# PIP_CONSTRAINT is read by every pip call (including the detached workers
+# below, which inherit the env), so nothing in this script can upgrade past it.
+export PIP_CONSTRAINT=/workspace/uvai-pip-constraints.txt
+cat > "$PIP_CONSTRAINT" <<'EOF'
+huggingface-hub>=1.5,<2.0
+EOF
+echo "[additional_params] pip constraints -> $PIP_CONSTRAINT (huggingface-hub<2.0)"
+
 # ── 1. neuter jupyter-lab ────────────────────────────────────────────────────
 mkdir -p /usr/local/sbin
 cat > /usr/local/sbin/jupyter-lab <<'EOF'
@@ -53,7 +65,7 @@ for _i in $(seq 1 135); do
     sleep 20
 done
 echo "=== klein fetch proceeding $(date -u +%FT%TZ) ===" >> "$LOG"
-pip install -q -U huggingface_hub >> "$LOG" 2>&1
+pip install -q -U "huggingface_hub>=1.5,<2.0" >> "$LOG" 2>&1
 mkdir -p "$M/diffusion_models" "$M/text_encoders" "$M/vae"
 ok=1
 
@@ -274,4 +286,14 @@ MEOF
     export OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-${OPENROUTER_KEY:-${LLM_KEY:-}}}"
     setsid nohup /root/mmx_supervise.sh >/dev/null 2>&1 < /dev/null &
     echo "[additional_params] mmx runner supervisor detached (pid $!; log: /workspace/mmx_runner.log)"
+fi
+
+# ── 5. final hf-hub re-pin + import check ────────────────────────────────────
+# Belt-and-braces for anything that bypassed the constraint (e.g. a pack's own
+# install.py). Prints the result so a bad state is visible in the boot log.
+python3 -m pip install -q "huggingface-hub>=1.5,<2.0" >/dev/null 2>&1
+if python3 -c "import transformers" 2>/dev/null; then
+    echo "[additional_params] huggingface-hub $(python3 -c 'import huggingface_hub as h; print(h.__version__)' 2>/dev/null) — transformers imports OK"
+else
+    echo "[additional_params] WARN: transformers import still failing — check: python3 -c 'import transformers'"
 fi
