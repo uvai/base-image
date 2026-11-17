@@ -1,0 +1,45 @@
+# models.manifest — read by fetch_models.py (run detached by additional_params.sh §6).
+# One entry per line:   <source>   <dest>[,<alias>...]   @group
+#   source:  hf:<owner>/<repo>/<path>          exact file
+#            hf:<owner>/<repo>/**/<filename>   search the repo for that filename
+#            gdrive:<folder_id>                every file in a Drive folder (shared with the service account)
+#            https://...                       plain URL
+#   dest:    path under ComfyUI/models/. Aliases become symlinks (some workflows expect a subfolder).
+#            For gdrive entries dest and aliases are folders.
+#   @group:  only fetched when the group is in MODEL_GROUPS (template env; default h3,swap,qwen,essential,hybrid).
+# Files already on disk are skipped, so the image's own MiniMax downloads are just linked where needed.
+
+# ── MiniMax H3 ───────────────────────────────────────────────────────────────
+# The image (minimax_quant=nvfp4) pulls the fp8 ref2va + nvfp4 text encoder + fp16/fp32 VAEs.
+# The character-swap workflows are authored against the int8 ref2va, so it's added here.
+hf:Comfy-Org/MiniMax-H3/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors   diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors   @h3
+hf:Comfy-Org/MiniMax-H3/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors           text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors,text_encoders/minimax/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors   @h3
+hf:Comfy-Org/MiniMax-H3/**/minimax_h3_video_vae_fp16.safetensors                              vae/minimax_h3_video_vae_fp16.safetensors,vae/minimax/minimax_h3_video_vae_fp16.safetensors   @h3
+hf:Comfy-Org/MiniMax-H3/vae/minimax_h3_video_vae_int8_convrot.safetensors                     vae/minimax_h3_video_vae_int8_convrot.safetensors   @h3
+hf:Comfy-Org/MiniMax-H3/vae/minimax_h3_audio_vae_fp32.safetensors                             vae/minimax_h3_audio_vae_fp32.safetensors,vae/minimax/minimax_h3_audio_vae_fp32.safetensors   @h3
+hf:Kijai/MiniMax-H3-TAE/vae_approx/taeh3.safetensors                                          vae_approx/taeh3.safetensors   @h3
+# Hybrid fl2va+ref2va (RefMod chain workflow). Previously only fetched when DOWNLOAD_KLEIN=true.
+hf:smhfacct/Minimax-H3-fl2va-ref2va-hybrid-models/minimax_h3_hybrid_fl2va_ref2va_b15-49-int8.safetensors   diffusion_models/minimax_h3_hybrid_fl2va_ref2va_b15-49-int8.safetensors   @hybrid
+
+# ── H3 character swap ────────────────────────────────────────────────────────
+hf:Comfy-Org/MiniMax-H3/loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors      loras/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors   @swap
+hf:drbaph/MiniMax-H3-Turbo-Lora-ComfyUI/experimental/minimax_h3_dmd_ref2va_8step_turbo_pruned.safetensors   loras/Downloads/minimax_h3_dmd_ref2va_8step_turbo_pruned.safetensors   @swap
+hf:Alissonerdx/Minimax-H3-ComfyUI/**/minimax_h3_lms_v1.0_r64.safetensors                      loras/minimax_h3_lms_v1.0_r64.safetensors   @swap
+hf:Alissonerdx/Minimax-H3-ComfyUI/**/h3_upscaler_lms_v0.1.safetensors                         latent_upscale_models/h3_upscaler_lms_v0.1.safetensors   @swap
+hf:akatz-ai/MiniMax-H3-Character-Swap-LoRA/h3_character_swap_pro4500_1000.safetensors         loras/h3_character_swap_pro4500_1000.safetensors   @swap
+hf:Comfy-Org/MOSS-Image/text_encoders/qwen3.5_9b_w4a8_gptq.safetensors                         text_encoders/qwen3.5_9b_w4a8_gptq.safetensors   @swap
+
+# ── Essential LoRAs from Google Drive (folder "loras_essential") ─────────────
+# Everything in the folder lands in loras/ and is also linked into loras/Downloads/ (where the swap workflows look).
+gdrive:1bucZvxkyMZSR-tfDwwXg-HfBSg8DTJ0F   loras,loras/Downloads   @essential
+
+# ── Qwen-Image 2.1 (ref2image / edit) ────────────────────────────────────────
+hf:Comfy-Org/Qwen-Image-2.1/diffusion_models/qwen_image_2.1_int8_convrot.safetensors          diffusion_models/qwen_image_2.1_int8_convrot.safetensors   @qwen
+hf:Comfy-Org/Qwen-Image-2.1/text_encoders/qwen3vl_8b_int8_convrot.safetensors                 text_encoders/qwen3vl_8b_int8_convrot.safetensors   @qwen
+hf:Comfy-Org/Qwen-Image-2.1/vae/qwen_image_2.1_vae_bf16.safetensors                           vae/qwen_image_2.1_vae_bf16.safetensors   @qwen
+
+# ── Krea 2 identity edit (parked; add "krea" to MODEL_GROUPS to fetch) ───────
+hf:Comfy-Org/Krea-2/diffusion_models/krea2_turbo_fp8_scaled.safetensors                       diffusion_models/krea2_turbo_fp8_scaled.safetensors   @krea
+hf:Comfy-Org/Krea-2/text_encoders/qwen3vl_4b_fp8_scaled.safetensors                           text_encoders/qwen3vl_4b_fp8_scaled.safetensors   @krea
+hf:Comfy-Org/Krea-2/vae/qwen_image_vae.safetensors                                            vae/qwen_image_vae.safetensors   @krea
+hf:conradlocke/krea2-identity-edit/krea2_identity_edit_v2.safetensors                         loras/krea2_identity_edit_v2.safetensors   @krea
