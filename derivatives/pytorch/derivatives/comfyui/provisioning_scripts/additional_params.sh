@@ -297,3 +297,66 @@ if python3 -c "import transformers" 2>/dev/null; then
 else
     echo "[additional_params] WARN: transformers import still failing — check: python3 -c 'import transformers'"
 fi
+
+# ── 6. uvai (minimal): ComfyUI pin + Qwen models + loras_essential ───────────
+# Nothing here can hold up the boot: one quick tag fetch (max 60s); the downloads run detached.
+#
+# ComfyUI version: the image's runtime resets ComfyUI at launch to the SHA in /comfyui-approved-ref
+# (its default COMFYUI_VERSION=approved) and reinstalls requirements itself, torch-constrained.
+# We only point that ref at our tested release. To move versions, test on a running box first
+# (bash /workspace/uvai/comfy_update.sh --test vX.Y.Z), then change UVAI_COMFY_PIN here.
+UVAI_COMFY_PIN=v0.45.5   # tested 2026-11-17: all packs import, Qwen-Image 2.1 nodes present
+# Model groups from models.manifest (h3, swap, hybrid, krea also available). Add groups here.
+UVAI_MODEL_GROUPS="${MODEL_GROUPS:-qwen,essential}"
+
+UVAI_RAW="https://raw.githubusercontent.com/uvai/base-image/main/derivatives/pytorch/derivatives/comfyui/provisioning_scripts"
+mkdir -p /workspace/uvai
+for f in fetch_models.py models.manifest comfy_update.sh; do
+  curl -fsSL --max-time 30 "$UVAI_RAW/$f" -o "/workspace/uvai/$f.new" \
+    && mv -f "/workspace/uvai/$f.new" "/workspace/uvai/$f" \
+    || { rm -f "/workspace/uvai/$f.new"; echo "[additional_params] WARN: uvai/$f fetch failed"; }
+done
+
+# 6a. ComfyUI pin via the runtime's approved ref
+if [ -f /ComfyUI/main.py ] && { [ -d /comfyui-runtime ] || [ -e /comfyui-approved-ref ]; }; then
+  git config --global --add safe.directory /ComfyUI 2>/dev/null
+  UVAI_SHA=$(git -C /ComfyUI rev-parse --verify -q "$UVAI_COMFY_PIN^{commit}" 2>/dev/null)
+  if [ -z "$UVAI_SHA" ]; then
+    timeout 60 git -C /ComfyUI fetch -q origin "refs/tags/$UVAI_COMFY_PIN:refs/tags/$UVAI_COMFY_PIN" 2>/dev/null
+    UVAI_SHA=$(git -C /ComfyUI rev-parse --verify -q "$UVAI_COMFY_PIN^{commit}" 2>/dev/null)
+  fi
+  if [ -n "$UVAI_SHA" ] && echo "$UVAI_SHA" > /comfyui-approved-ref 2>/dev/null; then
+    echo "[additional_params] ComfyUI pinned to $UVAI_COMFY_PIN (runtime moves to it at launch)"
+  else
+    echo "[additional_params] WARN: could not pin ComfyUI $UVAI_COMFY_PIN — staying on the image's version"
+  fi
+fi
+
+# 6b. models + loras_essential (Drive, via the GDRIVE_CREDENTIALS_B64 service account), detached
+if [ -f /workspace/uvai/fetch_models.py ]; then
+  cat > /root/uvai_fetch.sh <<'WEOF'
+#!/usr/bin/env bash
+# uvai_fetch.sh — detached model fetch. Written by additional_params.sh §6.
+set -u
+LOG=/workspace/fetch_models.log
+echo "=== uvai fetch $(date -u +%FT%TZ) groups=$UVAI_MODEL_GROUPS (pid $$) ===" >> "$LOG"
+# let the image's own MiniMax downloads/volume-sync finish first: proceed once the models trees
+# have stopped growing for two checks (cap 45 min)
+PREV=-1; STILL=0
+for _i in $(seq 1 135); do
+  CUR=$(du -sbL /workspace/ComfyUI/models /ComfyUI/models 2>/dev/null | awk '{s+=$1} END {print s+0}')
+  if [ "$CUR" = "$PREV" ]; then STILL=$((STILL+1)); else STILL=0; fi
+  [ "$STILL" -ge 2 ] && break
+  PREV=$CUR
+  sleep 20
+done
+python3 -c "import googleapiclient, google.oauth2" 2>/dev/null \
+  || timeout 600 python3 -m pip install -q google-api-python-client google-auth >> "$LOG" 2>&1
+python3 /workspace/uvai/fetch_models.py /workspace/uvai/models.manifest --group "$UVAI_MODEL_GROUPS" >> "$LOG" 2>&1
+echo "=== uvai fetch finished rc=$? $(date -u +%FT%TZ) ===" >> "$LOG"
+WEOF
+  chmod +x /root/uvai_fetch.sh
+  export UVAI_MODEL_GROUPS
+  setsid nohup /root/uvai_fetch.sh >/dev/null 2>&1 < /dev/null &
+  echo "[additional_params] model fetch detached: $UVAI_MODEL_GROUPS (log: /workspace/fetch_models.log)"
+fi
