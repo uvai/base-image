@@ -3,8 +3,8 @@
 # Baseline posture: MiniMax-only (JupyterLab disabled) + ComfyUI Manager and
 # the MiniMaxRefPack custom node (needed by the v4 H3 reference workflow).
 #
-# Hybrid H3 model (smhfacct fl2va+ref2va int8) is fetched by §6 via models.manifest
-# (group "hybrid"); drop it from MODEL_GROUPS to skip it (~21GB).
+# Hybrid H3 model (smhfacct fl2va+ref2va int8) downloads by default; set
+# DOWNLOAD_HYBRID=false in the template env to skip it (~21GB).
 #
 # Klein sessions: set DOWNLOAD_KLEIN=true in the Vast template env to pull the
 # FLUX.2 Klein 9B stack (bf16) in a detached worker via `hf download`.
@@ -245,8 +245,48 @@ if [ -n "$CUI" ]; then
     [ ${#PACKS_MISSING[@]} -gt 0 ] && echo "[additional_params] WARN: packs MISSING: ${PACKS_MISSING[*]} — workflows using them will show missing node types"
 fi
 
-# ── 4. (removed 2026-11-17) mmx runner ─────────────────────────────────────
-# The headless studio backend on :8190 was retired with vgo v22; nothing uses it any more.
+# ── 4. mmx runner (headless MiniMax studio backend, port 8190) ───────────────
+# Fetched from this repo's main so the studio's canonical backend rides with
+# the provisioning script; the runner inherits the Vast template env here
+# (OPENROUTER_KEY lives there) and replaces any predecessor itself (pidfile +
+# /proc scan — no fuser/lsof on this image). The supervisor loop restarts it
+# after a crash; a re-run of this script just starts a second loop whose
+# runner evicts the first, and the orphaned loop dies on its next iteration
+# because a healthy runner refuses to be replaced by an identical version.
+MMX_RAW="https://raw.githubusercontent.com/uvai/base-image/main/derivatives/pytorch/derivatives/comfyui/provisioning_scripts/mmx/mmx_runner.py"
+if curl -fsSL "$MMX_RAW" -o /workspace/mmx_runner.py.new \
+   && python3 -c "import ast,sys; ast.parse(open('/workspace/mmx_runner.py.new').read())" 2>/dev/null; then
+    mv -f /workspace/mmx_runner.py.new /workspace/mmx_runner.py
+    echo "[additional_params] mmx_runner.py fetched"
+else
+    rm -f /workspace/mmx_runner.py.new
+    echo "[additional_params] WARN: mmx_runner.py fetch failed$( [ -f /workspace/mmx_runner.py ] && echo ' — keeping existing copy')"
+fi
+if [ -f /workspace/mmx_runner.py ]; then
+    cat > /root/mmx_supervise.sh <<'MEOF'
+#!/usr/bin/env bash
+# mmx_supervise.sh — keep mmx_runner.py alive. Written by additional_params.sh.
+# One loop per boot: a second copy exits as soon as it sees another loop alive.
+LOCK=/workspace/mmx_supervise.pid
+if [ -f "$LOCK" ] && kill -0 "$(cat "$LOCK")" 2>/dev/null && [ "$(cat "$LOCK")" != "$$" ]; then
+    exit 0
+fi
+echo $$ > "$LOCK"
+cd /workspace
+while true; do
+    echo "=== mmx_runner start $(date -u +%FT%TZ) ===" >> /workspace/mmx_runner.log
+    python3 /workspace/mmx_runner.py >> /workspace/mmx_runner.log 2>&1
+    echo "=== mmx_runner exited rc=$? $(date -u +%FT%TZ) ===" >> /workspace/mmx_runner.log
+    sleep 3
+done
+MEOF
+    chmod +x /root/mmx_supervise.sh
+    # export the key under the name the runner reads first, whichever the
+    # template used; the runner itself also falls back through all three
+    export OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-${OPENROUTER_KEY:-${LLM_KEY:-}}}"
+    setsid nohup /root/mmx_supervise.sh >/dev/null 2>&1 < /dev/null &
+    echo "[additional_params] mmx runner supervisor detached (pid $!; log: /workspace/mmx_runner.log)"
+fi
 
 # ── 5. final hf-hub re-pin + import check ────────────────────────────────────
 # Belt-and-braces for anything that bypassed the constraint (e.g. a pack's own
@@ -256,106 +296,4 @@ if python3 -c "import transformers" 2>/dev/null; then
     echo "[additional_params] huggingface-hub $(python3 -c 'import huggingface_hub as h; print(h.__version__)' 2>/dev/null) — transformers imports OK"
 else
     echo "[additional_params] WARN: transformers import still failing — check: python3 -c 'import transformers'"
-fi
-
-# ── 6. uvai: node packs, ComfyUI pin, model + LoRA fetch ─────────────────────
-# Kept FAST: nothing here can hold up the boot for more than ~3 minutes. Pack requirements and
-# model downloads run detached. comfy_update.sh, fetch_models.py and models.manifest live next to
-# this script in the repo and are fetched fresh each boot. Template env (all optional):
-#   COMFY_UPDATE=false | COMFY_PIN=v0.xx.x     (see comfy_update.sh; default pin lives there)
-#   MODEL_GROUPS=h3,swap,qwen,essential,hybrid  (groups in models.manifest; add krea to bring Krea back)
-UVAI_RAW="https://raw.githubusercontent.com/uvai/base-image/main/derivatives/pytorch/derivatives/comfyui/provisioning_scripts"
-mkdir -p /workspace/uvai
-for f in comfy_update.sh fetch_models.py models.manifest; do
-  if curl -fsSL --max-time 30 "$UVAI_RAW/$f" -o "/workspace/uvai/$f.new"; then
-    mv -f "/workspace/uvai/$f.new" "/workspace/uvai/$f"
-  else
-    rm -f "/workspace/uvai/$f.new"
-    echo "[additional_params] WARN: uvai/$f fetch failed$( [ -f /workspace/uvai/$f ] && echo ' — keeping existing copy')"
-  fi
-done
-
-# git over HTTP/2 to github.com has been dropping mid-transfer on these hosts; HTTP/1.1 is
-# reliable, and a stalled transfer (<1KB/s for 60s) now aborts instead of hanging the boot.
-# Global, so the image's own pack clones that run after this script benefit too.
-git config --global http.version HTTP/1.1
-git config --global http.lowSpeedLimit 1000
-git config --global http.lowSpeedTime 60
-
-# 6a. extra node packs: shallow clone now (bounded), requirements later in the background
-CUI=""
-for d in /ComfyUI /workspace/ComfyUI; do
-  [ -f "$d/main.py" ] && CUI="$d" && break
-done
-UVAI_PACK_DIRS=""
-if [ -n "$CUI" ]; then
-  # RES4LYF is cloned by the image itself AFTER this script, as a full-history clone that crawls for
-  # many minutes; a shallow copy here makes the image see it present and skip its own clone.
-  for url in https://github.com/ClownsharkBatwing/RES4LYF \
-             https://github.com/1038lab/ComfyUI-RMBG \
-             https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler \
-             https://github.com/alisson-anjos/ComfyUI-BFSNodes; do
-    dir="$CUI/custom_nodes/$(basename "$url")"
-    if [ -d "$dir/.git" ] || timeout 90 git clone -q --depth 1 "$url" "$dir" 2>/dev/null; then
-      echo "[additional_params] pack $(basename "$url") present"
-      UVAI_PACK_DIRS="$UVAI_PACK_DIRS $dir"
-    else
-      rm -rf "$dir"
-      echo "[additional_params] WARN: $(basename "$url") clone failed/timed out — skipped"
-    fi
-  done
-  # requirements: detached, after ComfyUI is up (so we never race the runtime's own pip pass);
-  # each pack gets 10 min max. Restart ComfyUI once "uvai packs done" appears to load them.
-  cat > /root/uvai_packs.sh <<'WEOF'
-#!/usr/bin/env bash
-LOG=/workspace/uvai_packs.log
-echo "=== uvai packs $(date -u +%FT%TZ) ===" >> "$LOG"
-for _i in $(seq 1 90); do curl -sf http://127.0.0.1:8188 >/dev/null 2>&1 && break; sleep 10; done
-python3 -m pip freeze 2>/dev/null | grep -iE '^(torch|torchvision|torchaudio)==' > /workspace/uvai-torch-pin.txt
-for dir in "$@"; do
-  [ -f "$dir/requirements.txt" ] || continue
-  if timeout 600 python3 -m pip install -q -c /workspace/uvai-torch-pin.txt -r "$dir/requirements.txt" >> "$LOG" 2>&1; then
-    echo "ok       $(basename "$dir")" >> "$LOG"
-  else
-    echo "FAILED   $(basename "$dir") (rc=$?; 124 = timed out)" >> "$LOG"
-  fi
-done
-echo "=== uvai packs done $(date -u +%FT%TZ) — restart ComfyUI to load them ===" >> "$LOG"
-WEOF
-  chmod +x /root/uvai_packs.sh
-  # shellcheck disable=SC2086
-  setsid nohup /root/uvai_packs.sh $UVAI_PACK_DIRS >/dev/null 2>&1 < /dev/null &
-  echo "[additional_params] pack requirements detached (log: /workspace/uvai_packs.log)"
-fi
-
-# 6b. ComfyUI core pin (fast: resolves a tag and writes the runtime's approved ref)
-[ -f /workspace/uvai/comfy_update.sh ] && timeout 120 bash /workspace/uvai/comfy_update.sh
-
-# 6c. models + loras_essential, detached so boot isn't held up
-if [ -f /workspace/uvai/fetch_models.py ]; then
-  cat > /root/uvai_fetch.sh <<'WEOF'
-#!/usr/bin/env bash
-# uvai_fetch.sh — detached model fetch. Written by additional_params.sh §6.
-set -u
-LOG=/workspace/fetch_models.log
-echo "=== uvai fetch $(date -u +%FT%TZ) (pid $$) ===" >> "$LOG"
-# let the image's own MiniMax downloads finish first (same rule as klein_fetch): proceed once the
-# models trees have stopped growing for two checks, cap 45 min
-PREV=-1; STILL=0
-for _i in $(seq 1 135); do
-  CUR=$(du -sbL /workspace/ComfyUI/models /ComfyUI/models 2>/dev/null | awk '{s+=$1} END {print s+0}')
-  if [ "$CUR" = "$PREV" ]; then STILL=$((STILL+1)); else STILL=0; fi
-  [ "$STILL" -ge 2 ] && break
-  PREV=$CUR
-  sleep 20
-done
-timeout 600 python3 -m pip install -q google-api-python-client google-auth >> "$LOG" 2>&1
-python3 /workspace/uvai/fetch_models.py /workspace/uvai/models.manifest \
-  --group "${MODEL_GROUPS:-h3,swap,qwen,essential,hybrid}" >> "$LOG" 2>&1
-echo "=== uvai fetch finished rc=$? $(date -u +%FT%TZ) ===" >> "$LOG"
-WEOF
-  chmod +x /root/uvai_fetch.sh
-  export MODEL_GROUPS="${MODEL_GROUPS:-h3,swap,qwen,essential,hybrid}"
-  setsid nohup /root/uvai_fetch.sh >/dev/null 2>&1 < /dev/null &
-  echo "[additional_params] uvai model fetch detached (pid $!; log: /workspace/fetch_models.log)"
 fi
