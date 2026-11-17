@@ -289,7 +289,10 @@ for d in /ComfyUI /workspace/ComfyUI; do
 done
 UVAI_PACK_DIRS=""
 if [ -n "$CUI" ]; then
-  for url in https://github.com/1038lab/ComfyUI-RMBG \
+  # RES4LYF is cloned by the image itself AFTER this script, as a full-history clone that crawls for
+  # many minutes; a shallow copy here makes the image see it present and skip its own clone.
+  for url in https://github.com/ClownsharkBatwing/RES4LYF \
+             https://github.com/1038lab/ComfyUI-RMBG \
              https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler \
              https://github.com/alisson-anjos/ComfyUI-BFSNodes; do
     dir="$CUI/custom_nodes/$(basename "$url")"
