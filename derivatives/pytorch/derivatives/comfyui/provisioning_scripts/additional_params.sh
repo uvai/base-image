@@ -30,6 +30,17 @@ huggingface-hub>=1.5,<2.0
 EOF
 echo "[additional_params] pip constraints -> $PIP_CONSTRAINT (huggingface-hub<2.0)"
 
+# ── 0b. git: HTTP/1.1 + stall timeout ───────────────────────────────────────────
+# 2026-11-17: git over HTTP/2 to github.com kept stalling/dropping mid-transfer from Vast hosts
+# ("HTTP/2 stream ... CANCEL", TLS resets), and every pack clone here and in the image's own boot
+# runs sequentially with no timeout, so one stalled clone froze the whole boot. HTTP/1.1 avoids the
+# drops; lowSpeed makes a clone stuck below 1 KB/s for 60s abort instead of hanging. Global, so the
+# image's clones that run after this script get it too.
+git config --global http.version HTTP/1.1
+git config --global http.lowSpeedLimit 1000
+git config --global http.lowSpeedTime 60
+echo "[additional_params] git: HTTP/1.1, abort clones stalled >60s"
+
 # ── 1. neuter jupyter-lab ────────────────────────────────────────────────────
 mkdir -p /usr/local/sbin
 cat > /usr/local/sbin/jupyter-lab <<'EOF'
