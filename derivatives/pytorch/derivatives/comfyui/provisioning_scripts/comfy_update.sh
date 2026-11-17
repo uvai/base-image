@@ -25,6 +25,17 @@ PIN=/workspace/uvai-torch-pin.txt
 python3 -m pip freeze 2>/dev/null | grep -iE '^(torch|torchvision|torchaudio)==' > "$PIN"
 reqs() { python3 -m pip install -q -c "$PIN" -r requirements.txt >> "$LOG" 2>&1; }
 
+# The hearmeman runtime's start.sh runs after us and, with COMFYUI_VERSION=approved (its default),
+# resets ComfyUI to the SHA in /comfyui-approved-ref. Writing our verified SHA there makes the
+# runtime keep our version instead of undoing it — no extra template env needed.
+approve() {
+  if [ -e /comfyui-approved-ref ] || [ -d /comfyui-runtime ]; then
+    git rev-parse HEAD > /comfyui-approved-ref 2>/dev/null \
+      && log "runtime approved-ref -> $(git describe --tags 2>/dev/null)" \
+      || log "WARN: could not write /comfyui-approved-ref — runtime may reset ComfyUI"
+  fi
+}
+
 PREV=$(git rev-parse HEAD)
 PREV_DESC=$(git describe --tags 2>/dev/null || echo "${PREV:0:10}")
 echo "$PREV" > /workspace/comfy_prev_commit.txt
@@ -35,7 +46,7 @@ fi
 TARGET="${COMFY_PIN:-$(git tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)}"
 [ -z "$TARGET" ] && { log "no release tag found — staying on $PREV_DESC"; exit 0; }
 if [ "$(git rev-parse "$TARGET^{commit}" 2>/dev/null)" = "$PREV" ]; then
-  log "already on $TARGET"; exit 0
+  log "already on $TARGET"; approve; exit 0
 fi
 
 log "updating $PREV_DESC -> $TARGET"
@@ -56,3 +67,4 @@ if [ "$RC" -ne 0 ] || [ -n "$BROKEN" ]; then
 fi
 OTHER=$(grep -c 'IMPORT FAILED' "$SMOKE")
 log "now on $(git describe --tags 2>/dev/null) (was $PREV_DESC); other packs failing import: $OTHER (see $SMOKE)"
+approve
