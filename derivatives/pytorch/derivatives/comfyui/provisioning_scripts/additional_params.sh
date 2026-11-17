@@ -258,15 +258,16 @@ else
     echo "[additional_params] WARN: transformers import still failing — check: python3 -c 'import transformers'"
 fi
 
-# ── 6. uvai: node packs, ComfyUI core update, model + LoRA fetch ─────────────
-# comfy_update.sh, fetch_models.py and models.manifest live next to this script in
-# the repo and are fetched fresh each boot. Template env (all optional):
-#   COMFY_UPDATE=false | COMFY_PIN=v0.xx.x     (see comfy_update.sh)
+# ── 6. uvai: node packs, ComfyUI pin, model + LoRA fetch ─────────────────────
+# Kept FAST: nothing here can hold up the boot for more than ~3 minutes. Pack requirements and
+# model downloads run detached. comfy_update.sh, fetch_models.py and models.manifest live next to
+# this script in the repo and are fetched fresh each boot. Template env (all optional):
+#   COMFY_UPDATE=false | COMFY_PIN=v0.xx.x     (see comfy_update.sh; default pin lives there)
 #   MODEL_GROUPS=h3,swap,qwen,essential,hybrid  (groups in models.manifest; add krea to bring Krea back)
 UVAI_RAW="https://raw.githubusercontent.com/uvai/base-image/main/derivatives/pytorch/derivatives/comfyui/provisioning_scripts"
 mkdir -p /workspace/uvai
 for f in comfy_update.sh fetch_models.py models.manifest; do
-  if curl -fsSL "$UVAI_RAW/$f" -o "/workspace/uvai/$f.new"; then
+  if curl -fsSL --max-time 30 "$UVAI_RAW/$f" -o "/workspace/uvai/$f.new"; then
     mv -f "/workspace/uvai/$f.new" "/workspace/uvai/$f"
   else
     rm -f "/workspace/uvai/$f.new"
@@ -274,27 +275,58 @@ for f in comfy_update.sh fetch_models.py models.manifest; do
   fi
 done
 
-# 6a. extra node packs (character swap / H3 upscaler / shot planner)
+# git over HTTP/2 to github.com has been dropping mid-transfer on these hosts; HTTP/1.1 is
+# reliable, and a stalled transfer (<1KB/s for 60s) now aborts instead of hanging the boot.
+# Global, so the image's own pack clones that run after this script benefit too.
+git config --global http.version HTTP/1.1
+git config --global http.lowSpeedLimit 1000
+git config --global http.lowSpeedTime 60
+
+# 6a. extra node packs: shallow clone now (bounded), requirements later in the background
 CUI=""
 for d in /ComfyUI /workspace/ComfyUI; do
   [ -f "$d/main.py" ] && CUI="$d" && break
 done
+UVAI_PACK_DIRS=""
 if [ -n "$CUI" ]; then
-  python3 -m pip freeze 2>/dev/null | grep -iE '^(torch|torchvision|torchaudio)==' > /workspace/uvai-torch-pin.txt
   for url in https://github.com/1038lab/ComfyUI-RMBG \
              https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler \
              https://github.com/alisson-anjos/ComfyUI-BFSNodes; do
     dir="$CUI/custom_nodes/$(basename "$url")"
-    if [ ! -d "$dir/.git" ] && ! git clone -q --depth 1 "$url" "$dir" 2>/dev/null; then
-      echo "[additional_params] WARN: $(basename "$url") clone failed"; continue
+    if [ -d "$dir/.git" ] || timeout 90 git clone -q --depth 1 "$url" "$dir" 2>/dev/null; then
+      echo "[additional_params] pack $(basename "$url") present"
+      UVAI_PACK_DIRS="$UVAI_PACK_DIRS $dir"
+    else
+      rm -rf "$dir"
+      echo "[additional_params] WARN: $(basename "$url") clone failed/timed out — skipped"
     fi
-    [ -f "$dir/requirements.txt" ] && python3 -m pip install -q -c /workspace/uvai-torch-pin.txt -r "$dir/requirements.txt" >/dev/null 2>&1
-    echo "[additional_params] pack $(basename "$url") ok"
   done
+  # requirements: detached, after ComfyUI is up (so we never race the runtime's own pip pass);
+  # each pack gets 10 min max. Restart ComfyUI once "uvai packs done" appears to load them.
+  cat > /root/uvai_packs.sh <<'WEOF'
+#!/usr/bin/env bash
+LOG=/workspace/uvai_packs.log
+echo "=== uvai packs $(date -u +%FT%TZ) ===" >> "$LOG"
+for _i in $(seq 1 90); do curl -sf http://127.0.0.1:8188 >/dev/null 2>&1 && break; sleep 10; done
+python3 -m pip freeze 2>/dev/null | grep -iE '^(torch|torchvision|torchaudio)==' > /workspace/uvai-torch-pin.txt
+for dir in "$@"; do
+  [ -f "$dir/requirements.txt" ] || continue
+  if timeout 600 python3 -m pip install -q -c /workspace/uvai-torch-pin.txt -r "$dir/requirements.txt" >> "$LOG" 2>&1; then
+    echo "ok       $(basename "$dir")" >> "$LOG"
+  else
+    echo "FAILED   $(basename "$dir") (rc=$?; 124 = timed out)" >> "$LOG"
+  fi
+done
+echo "=== uvai packs done $(date -u +%FT%TZ) — restart ComfyUI to load them ===" >> "$LOG"
+WEOF
+  chmod +x /root/uvai_packs.sh
+  # shellcheck disable=SC2086
+  setsid nohup /root/uvai_packs.sh $UVAI_PACK_DIRS >/dev/null 2>&1 < /dev/null &
+  echo "[additional_params] pack requirements detached (log: /workspace/uvai_packs.log)"
 fi
 
-# 6b. ComfyUI core -> newest release (rolls itself back if our packs break)
-[ -f /workspace/uvai/comfy_update.sh ] && bash /workspace/uvai/comfy_update.sh
+# 6b. ComfyUI core pin (fast: resolves a tag and writes the runtime's approved ref)
+[ -f /workspace/uvai/comfy_update.sh ] && timeout 120 bash /workspace/uvai/comfy_update.sh
 
 # 6c. models + loras_essential, detached so boot isn't held up
 if [ -f /workspace/uvai/fetch_models.py ]; then
@@ -314,7 +346,7 @@ for _i in $(seq 1 135); do
   PREV=$CUR
   sleep 20
 done
-python3 -m pip install -q google-api-python-client google-auth >> "$LOG" 2>&1
+timeout 600 python3 -m pip install -q google-api-python-client google-auth >> "$LOG" 2>&1
 python3 /workspace/uvai/fetch_models.py /workspace/uvai/models.manifest \
   --group "${MODEL_GROUPS:-h3,swap,qwen,essential,hybrid}" >> "$LOG" 2>&1
 echo "=== uvai fetch finished rc=$? $(date -u +%FT%TZ) ===" >> "$LOG"

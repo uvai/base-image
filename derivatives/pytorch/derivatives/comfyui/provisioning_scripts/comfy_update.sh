@@ -1,16 +1,31 @@
 #!/usr/bin/env bash
-# comfy_update.sh — bring ComfyUI core to the newest release tag (or $COMFY_PIN) before
-# ComfyUI starts, and roll back automatically if any of the packs we depend on fail to import.
-# Run by additional_params.sh §6 (pre-boot). Log: /workspace/comfy_update.log
+# comfy_update.sh — pin ComfyUI core to a known-good release. FAST PATH: no checkout, pip or
+# import test at boot.
+#
+# On the hearmeman image, the runtime's start.sh runs after additional_params.sh and (with its
+# default COMFYUI_VERSION=approved) moves ComfyUI to the SHA in /comfyui-approved-ref and
+# reinstalls requirements (torch-constrained) in its own single pass. So at boot we only resolve
+# the pinned tag to a SHA and write it there. On images without that runtime we check it out.
 #
 # Env (Vast template, all optional):
 #   COMFY_UPDATE=false   skip entirely (stay on the image's ComfyUI)
-#   COMFY_PIN=v0.xx.x    use this tag/commit instead of the newest release
+#   COMFY_PIN=v0.xx.x    override the pinned tag below
+#
+# Bumping the pin: on a running instance first run   bash comfy_update.sh --test v0.NN.N
+# (checks it out, installs requirements, loads every custom node pack and reports failures),
+# then change DEFAULT_PIN here.
 set -u
 LOG=/workspace/comfy_update.log
 log() { echo "[comfy_update] $*" | tee -a "$LOG"; }
 
-[ "${COMFY_UPDATE:-true}" = "true" ] || { log "COMFY_UPDATE=${COMFY_UPDATE} — skipped"; exit 0; }
+# smoke-tested 2026-11-17: mmx-comfy-nodes, H3 Project Suite, MiniMaxH3Mod, RefPack, KJ, VHS,
+# RMBG, BFSNodes, H3 latent upscaler all import cleanly
+DEFAULT_PIN=v0.45.5
+
+TEST=""
+if [ "${1:-}" = "--test" ]; then TEST=1; COMFY_PIN="${2:-${COMFY_PIN:-$DEFAULT_PIN}}"; fi
+PIN="${COMFY_PIN:-$DEFAULT_PIN}"
+[ -z "$TEST" ] && [ "${COMFY_UPDATE:-true}" != "true" ] && { log "COMFY_UPDATE=${COMFY_UPDATE} — skipped"; exit 0; }
 
 CUI=""
 for d in /ComfyUI /workspace/ComfyUI; do
@@ -20,51 +35,38 @@ done
 cd "$CUI" || exit 0
 git config --global --add safe.directory "$CUI" 2>/dev/null
 
-# torch stays exactly as the image ships it (cu130 build); hf-hub stays <2.0 via PIP_CONSTRAINT
-PIN=/workspace/uvai-torch-pin.txt
-python3 -m pip freeze 2>/dev/null | grep -iE '^(torch|torchvision|torchaudio)==' > "$PIN"
-reqs() { python3 -m pip install -q -c "$PIN" -r requirements.txt >> "$LOG" 2>&1; }
-
-# The hearmeman runtime's start.sh runs after us and, with COMFYUI_VERSION=approved (its default),
-# resets ComfyUI to the SHA in /comfyui-approved-ref. Writing our verified SHA there makes the
-# runtime keep our version instead of undoing it — no extra template env needed.
-approve() {
-  if [ -e /comfyui-approved-ref ] || [ -d /comfyui-runtime ]; then
-    git rev-parse HEAD > /comfyui-approved-ref 2>/dev/null \
-      && log "runtime approved-ref -> $(git describe --tags 2>/dev/null)" \
-      || log "WARN: could not write /comfyui-approved-ref — runtime may reset ComfyUI"
-  fi
-}
-
-PREV=$(git rev-parse HEAD)
-PREV_DESC=$(git describe --tags 2>/dev/null || echo "${PREV:0:10}")
-echo "$PREV" > /workspace/comfy_prev_commit.txt
-git stash -u -q 2>/dev/null || true
-if ! git fetch -q --tags origin 2>>"$LOG"; then
-  log "git fetch failed — staying on $PREV_DESC"; exit 0
+SHA=$(git rev-parse --verify -q "$PIN^{commit}" 2>/dev/null)
+if [ -z "$SHA" ]; then
+  timeout 90 git fetch -q origin "refs/tags/$PIN:refs/tags/$PIN" 2>>"$LOG"
+  SHA=$(git rev-parse --verify -q "$PIN^{commit}" 2>/dev/null)
 fi
-TARGET="${COMFY_PIN:-$(git tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)}"
-[ -z "$TARGET" ] && { log "no release tag found — staying on $PREV_DESC"; exit 0; }
-if [ "$(git rev-parse "$TARGET^{commit}" 2>/dev/null)" = "$PREV" ]; then
-  log "already on $TARGET"; approve; exit 0
-fi
+[ -z "$SHA" ] && { log "could not resolve $PIN (fetch failed?) — leaving ComfyUI as the image ships it"; exit 0; }
 
-log "updating $PREV_DESC -> $TARGET"
-git checkout -q "$TARGET" 2>>"$LOG" || { log "checkout $TARGET failed — staying on $PREV_DESC"; exit 0; }
-reqs
-
-# Smoke test: load every custom node pack once and exit. Roll back if a pack we rely on breaks.
-SMOKE=/workspace/comfy_smoke.log
-timeout 420 python3 main.py --quick-test-for-ci --port 8199 > "$SMOKE" 2>&1
-RC=$?
-BROKEN=$(grep 'IMPORT FAILED' "$SMOKE" \
-  | grep -iE 'mmx|H3-Project|MiniMaxH3Mod|MiniMaxRefPack|KJNodes|VideoHelperSuite|RMBG|BFSNodes|latent_Upscaler' \
-  | sed 's|.*/custom_nodes/||' | tr '\n' ' ')
-if [ "$RC" -ne 0 ] || [ -n "$BROKEN" ]; then
-  log "ROLLED BACK to $PREV_DESC — rc=$RC broken: ${BROKEN:-none (see $SMOKE)}"
-  git checkout -q "$PREV" && reqs
+if [ -n "$TEST" ]; then
+  PINF=/workspace/uvai-torch-pin.txt
+  python3 -m pip freeze 2>/dev/null | grep -iE '^(torch|torchvision|torchaudio)==' > "$PINF"
+  PREV=$(git rev-parse HEAD)
+  git checkout -q "$SHA" && python3 -m pip install -q -c "$PINF" -r requirements.txt
+  echo "[comfy_update] loading every custom node pack under $PIN (up to 7 min)..."
+  timeout 420 python3 main.py --quick-test-for-ci --port 8199 > /workspace/comfy_smoke.log 2>&1
+  echo "[comfy_update] exit=$?  import failures:"; grep 'IMPORT FAILED' /workspace/comfy_smoke.log || echo "  none"
+  echo "[comfy_update] still checked out at $PIN; to go back: git -C $CUI checkout $PREV"
   exit 0
 fi
-OTHER=$(grep -c 'IMPORT FAILED' "$SMOKE")
-log "now on $(git describe --tags 2>/dev/null) (was $PREV_DESC); other packs failing import: $OTHER (see $SMOKE)"
-approve
+
+if [ -d /comfyui-runtime ] || [ -e /comfyui-approved-ref ]; then
+  if echo "$SHA" > /comfyui-approved-ref 2>/dev/null; then
+    log "pinned $PIN ($(echo "$SHA" | cut -c1-10)) in /comfyui-approved-ref — the runtime moves ComfyUI to it at launch"
+  else
+    log "WARN: /comfyui-approved-ref not writable — ComfyUI stays on the image's version"
+  fi
+else
+  PINF=/workspace/uvai-torch-pin.txt
+  python3 -m pip freeze 2>/dev/null | grep -iE '^(torch|torchvision|torchaudio)==' > "$PINF"
+  if [ "$(git rev-parse HEAD)" != "$SHA" ]; then
+    git checkout -q "$SHA" && timeout 300 python3 -m pip install -q -c "$PINF" -r requirements.txt >> "$LOG" 2>&1
+    log "checked out $PIN (no runtime on this image)"
+  else
+    log "already on $PIN"
+  fi
+fi
