@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # mmx_extras.sh — browser terminal + direct NAS output sync for the MiniMax instance.
-# v4: the nebN session folder is created lazily (first real output) and an empty newest nebN is reused.
 # v3: the NAS setup runs as a fully detached worker (setsid+nohup) so it
 # survives Vast reaping the on-start process group mid-boot — the failure mode
 # observed 2026-08-06 where setup died silently between steps.
@@ -90,52 +89,32 @@ for i in $(seq 1 12); do
 done
 [ -z "$NAS_UP" ] && { log "ERROR: NAS unreachable after 60s — no sync this session"; exit 1; }
 
-# session folder (sticky per instance). v4: created LAZILY — only once ComfyUI has written a
-# real file — and the newest nebN on the NAS is reused when it holds no real files, so a dud
-# instance never leaves an empty nebN behind (2026-11-20).
+# session folder (sticky per instance)
 NEB_FILE=/root/.neb_session
-OUT=/workspace/ComfyUI/output
-mkdir -p "$OUT"
-# "real" = anything except ComfyUI's placeholder, dotfiles, partials and Synology metadata
-real_local() { find "$OUT" -type f ! -name '_output_images_will_be_put_here' ! -name '.*' ! -name '*.part*' 2>/dev/null | head -1; }
-pick_session() {
+if [ -f "$NEB_FILE" ]; then
+    NEB=$(cat "$NEB_FILE")
+    log "resuming session $NEB"
+else
     LISTING=$(eval "$NAS_SSH" "$NAS_USERHOST" "\"ls -1d $NAS_BASE/neb* 2>/dev/null\"") || LISTING=""
     LAST=$(printf '%s\n' "$LISTING" | grep -oE 'neb[0-9]+$' | grep -oE '[0-9]+' | sort -n | tail -1)
-    if [ -z "$LAST" ]; then
-        # an empty listing must not be mistaken for "no history" (the neb1 bug, 2026-08-07)
-        eval "$NAS_SSH" "$NAS_USERHOST" "\"test -d $NAS_BASE\"" \
-            || { log "ERROR: $NAS_BASE missing on NAS (share locked?) — will retry"; return 1; }
-        NEB=neb1
-    else
-        HAS=$(eval "$NAS_SSH" "$NAS_USERHOST" "\"find $NAS_BASE/neb$LAST -type f ! -name _output_images_will_be_put_here ! -name '.*' ! -path '*@eaDir*' 2>/dev/null | head -1; echo LISTED\"") || HAS=""
-        case "$HAS" in
-            *LISTED*) ;;
-            *) log "WARN: could not inspect neb$LAST — will retry"; return 1;;
-        esac
-        if [ "$HAS" = "LISTED" ]; then NEB="neb$LAST"; log "neb$LAST has no files — reusing it"
-        else NEB="neb$(( LAST + 1 ))"; fi
+    # empty listing on a base dir that should have history is suspicious — verify
+    # the base dir itself before defaulting to neb1
+    if [ -z "$LAST" ] && ! eval "$NAS_SSH" "$NAS_USERHOST" "\"test -d $NAS_BASE\""; then
+        log "ERROR: $NAS_BASE missing on NAS — check NAS_DEST"; exit 1
     fi
+    NEB="neb$(( ${LAST:-0} + 1 ))"
     eval "$NAS_SSH" "$NAS_USERHOST" "\"mkdir -p $NAS_BASE/$NEB\"" \
-        || { log "ERROR: cannot create $NAS_BASE/$NEB — will retry"; return 1; }
+        || { log "ERROR: cannot create $NAS_BASE/$NEB"; exit 1; }
     echo "$NEB" > "$NEB_FILE"
     log "session folder: $NAS_BASE/$NEB"
-}
-
-if [ -f "$NEB_FILE" ]; then
-    log "resuming session $(cat "$NEB_FILE")"
-else
-    log "no session folder yet — one is created on the NAS when the first output file appears"
 fi
 
 # sync loop with heartbeat
-log "sync loop starting -> $NAS_BASE (every 60s)"
+mkdir -p /workspace/ComfyUI/output
+log "sync loop starting -> $NAS_BASE/$NEB (every 60s)"
 while true; do
-    if [ ! -f "$NEB_FILE" ]; then
-        if [ -z "$(real_local)" ] || ! pick_session; then sleep 30; continue; fi
-    fi
-    NEB=$(cat "$NEB_FILE")
     if eval rsync -a --partial -e "\"$NAS_SSH\"" \
-        "$OUT/" "$NAS_USERHOST:$NAS_BASE/$NEB/" >/dev/null 2>&1; then
+        /workspace/ComfyUI/output/ "$NAS_USERHOST:$NAS_BASE/$NEB/" >/dev/null 2>&1; then
         echo "$(date '+%F %T') pass ok -> $NEB" >> /workspace/nas_sync.log
     else
         echo "$(date '+%F %T') pass FAILED" >> /workspace/nas_sync.log
