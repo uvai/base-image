@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # mmx_extras.sh — browser terminal + direct NAS output sync for the MiniMax instance.
+# v3.1: ssh key keeper installs the Mac key itself (Vast is sometimes late with it).
 # v3: the NAS setup runs as a fully detached worker (setsid+nohup) so it
 # survives Vast reaping the on-start process group mid-boot — the failure mode
 # observed 2026-08-06 where setup died silently between steps.
@@ -28,6 +29,35 @@ echo "=== mmx_extras $(date -u +%FT%TZ) ===" >> "$LOG"
         echo "[extras] ttyd on 127.0.0.1:7681"
     fi
 } >> "$LOG" 2>&1
+
+# ---------- ssh key keeper (2026-11-22) ------------------------------------------
+# Vast sometimes installs the account's ssh keys minutes late (or not at all), which
+# locks vgo out ("Permission denied (publickey)"). Install the Mac's key ourselves and
+# keep it (plus sshd-acceptable permissions) in place for the life of the instance.
+# Override/extend with VGO_SSH_KEY in the template env (one or more public keys, ';'-separated).
+VGO_KEYS="${VGO_SSH_KEY:-ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDw8kPMD8aqmI7VTJu8aUFvHDXG1GxC2q0kCn7qd5/YX shaveosphere-mac}"
+cat > /root/vgo_keykeeper.sh <<'KEOF'
+#!/usr/bin/env bash
+# vgo_keykeeper.sh — keep the given public key(s) in root's authorized_keys
+IFS=';' read -r -a KEYS <<< "$1"
+while :; do
+    mkdir -p /root/.ssh
+    for K in "${KEYS[@]}"; do
+        K="$(echo "$K" | sed 's/^ *//;s/ *$//')"; KB="$(echo "$K" | awk '{print $2}')"
+        [ -n "$KB" ] || continue
+        if ! grep -qF "$KB" /root/.ssh/authorized_keys 2>/dev/null; then
+            echo "$K" >> /root/.ssh/authorized_keys
+            echo "[keykeeper] $(date -u +%FT%TZ) installed key ${KB:0:16}…" >> /workspace/extras_setup.log
+        fi
+    done
+    chown root:root /root /root/.ssh /root/.ssh/authorized_keys 2>/dev/null
+    chmod go-w /root 2>/dev/null; chmod 700 /root/.ssh; chmod 600 /root/.ssh/authorized_keys 2>/dev/null
+    sleep 30
+done
+KEOF
+chmod +x /root/vgo_keykeeper.sh
+pgrep -f vgo_keykeeper.sh >/dev/null || setsid nohup /root/vgo_keykeeper.sh "$VGO_KEYS" >/dev/null 2>&1 < /dev/null &
+echo "[extras] ssh key keeper started" >> "$LOG"
 
 # ---------- NAS sync: hand everything to a detached worker --------------------
 if [ -z "${TS_AUTHKEY:-}" ] || [ -z "${NAS_KEY_B64:-}" ] || [ -z "${NAS_DEST:-}" ]; then
